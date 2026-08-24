@@ -16,9 +16,10 @@ Dijk
 **Dijk Core** is the foundational profile: a small, low-level language whose
 implementation teaches how a language and its compiler are actually built.
 
-This repository is currently at **Milestone 0 — Language Charter**. No
-lexer, parser, or compiler exists yet. See [docs/](docs/) for the philosophy,
-design constraints, architecture, and roadmap that will govern implementation.
+This repository has completed **Step 1 — Lexical Analysis**: source text
+can be turned into a token stream via `dijk lex`. There is no parser or
+compiler yet. See [docs/](docs/) for the philosophy, design constraints,
+architecture, and roadmap that govern implementation.
 
 ## Project trajectory
 
@@ -54,6 +55,8 @@ Self-hosting
 - [docs/language.md](docs/language.md) — initial design constraints and feature boundary
 - [docs/architecture.md](docs/architecture.md) — intended compiler architecture
 - [docs/roadmap.md](docs/roadmap.md) — provisional implementation phases
+- [docs/lexer.md](docs/lexer.md) — lexical grammar implemented by `dijk lex`
+- [docs/testing.md](docs/testing.md) — automated tests and manual CLI testing
 
 ## Building and running
 
@@ -64,7 +67,13 @@ cargo build
 cargo run -- --version
 cargo run -- --help
 cargo run -- doctor
+cargo run -- lex examples/hello.dk
+cargo test
 ```
+
+See [docs/testing.md](docs/testing.md) for the full manual-testing
+workflow, including sample fixtures for every token category and error
+case.
 
 Or build once and use the binary directly:
 
@@ -77,14 +86,27 @@ cargo build --release
 ## Status
 
 ```text
-dijk --version
+dijk lex hello.dk
 ```
 
 ```text
-Dijk 0.0.0
+FN
+IDENTIFIER("main")
+LPAREN
+RPAREN
+LBRACE
+LET
+IDENTIFIER("x")
+COLON
+IDENTIFIER("i32")
+EQUAL
+INTEGER("42")
+SEMICOLON
+RBRACE
+EOF
 ```
 
-There is no `dijk compile` yet. There is nothing to compile yet.
+There is no `dijk parse` or `dijk compile` yet.
 
 ## Contributing
 

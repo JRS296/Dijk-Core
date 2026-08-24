@@ -26,10 +26,11 @@ Phase 16 — Self-hosting
 
 ## Current phase
 
-**Phase 0 — Language design.** This repository is at Milestone 0, the
-language charter: philosophy, constraints, and architecture are recorded
-before any implementation begins. See [philosophy.md](philosophy.md),
-[language.md](language.md), and [architecture.md](architecture.md).
+**Phase 1 — Lexer.** Phase 0 (language design) produced the charter in
+[philosophy.md](philosophy.md), [language.md](language.md), and
+[architecture.md](architecture.md). Phase 1 has implemented lexical
+analysis per [lexer.md](lexer.md): `dijk lex <file>` turns source text
+into a token stream. There is no parser yet.
 
 ## Correspondence with `dijkstra-book`
 
