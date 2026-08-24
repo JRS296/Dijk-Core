@@ -1,0 +1,10 @@
+[package]
+name = "dijk"
+version = "0.0.0"
+edition = "2021"
+description = "Dijk Core — the foundational Dijk language and compiler (charter stage, no implementation yet)"
+license = "Apache-2.0"
+
+[[bin]]
+name = "dijk"
+path = "src/main.rs"
