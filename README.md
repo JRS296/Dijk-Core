@@ -1,5 +1,9 @@
 # Dijk Core
 
+**Dijk 0.0.1** — experimental / educational development release. Grammar,
+ABI, standard library, compiler compatibility, and runtime behavior are
+all still unstable. See [CHANGELOG.md](CHANGELOG.md).
+
 Dijk is an educational programming language designed to teach programming and
 systems concepts from first principles, while remaining capable of scaling
 into practical application development through Dijk+.
@@ -16,10 +20,23 @@ Dijk
 **Dijk Core** is the foundational profile: a small, low-level language whose
 implementation teaches how a language and its compiler are actually built.
 
-This repository has completed **Step 1 — Lexical Analysis**: source text
-(`.dk` or `.dijk` files) can be turned into a token stream via `dijk lex`.
-There is no parser or compiler yet. See [docs/](docs/) for the philosophy,
-design constraints, architecture, and roadmap that govern implementation.
+## Current status
+
+```text
+✓ Project foundations (charter, philosophy, architecture, roadmap)
+✓ Lexical analysis (dijk lex, .dk and .dijk source files)
+□ Parsing
+□ AST
+□ Semantic analysis
+□ Type checking
+□ Interpretation
+□ Intermediate representation
+□ Native compilation
+```
+
+`0.0.1` is intentionally incomplete — there is no parser or compiler yet.
+See [docs/](docs/) for the philosophy, design constraints, architecture,
+and roadmap that govern implementation.
 
 ## Project trajectory
 
@@ -57,6 +74,7 @@ Self-hosting
 - [docs/roadmap.md](docs/roadmap.md) — provisional implementation phases
 - [docs/lexer.md](docs/lexer.md) — lexical grammar implemented by `dijk lex`
 - [docs/testing.md](docs/testing.md) — automated tests and manual CLI testing
+- [CHANGELOG.md](CHANGELOG.md) — what shipped in each release
 
 ## Building and running
 
@@ -83,7 +101,7 @@ cargo build --release
 .\target\release\dijk.exe --version    # Windows PowerShell
 ```
 
-## Status
+## Example
 
 ```text
 dijk lex hello.dk

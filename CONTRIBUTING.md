@@ -24,10 +24,18 @@ likely belongs in `dijk-stdlib` or `dijk+` instead.
 ## Process
 
 This project does not yet have CI, a formal review process, or released
-versions beyond `0.0.0`. Until then:
+versions beyond `0.0.1`. Until then:
 
 1. Open an issue or discussion describing the change and which roadmap
    phase (see [docs/roadmap.md](docs/roadmap.md)) it belongs to.
 2. Keep pull requests scoped to a single concern.
 3. Update the relevant `docs/` file when a change affects the language
    design or architecture, not just the code.
+4. Before proposing a change, run:
+
+   ```bash
+   cargo build
+   cargo test
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo fmt -- --check
+   ```

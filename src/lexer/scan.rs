@@ -17,7 +17,11 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
-        Self { source, bytes: source.as_bytes(), pos: 0 }
+        Self {
+            source,
+            bytes: source.as_bytes(),
+            pos: 0,
+        }
     }
 
     /// Lex the entire source, returning every token (always ending with
@@ -117,7 +121,11 @@ impl<'a> Lexer<'a> {
             }
         };
 
-        Ok(Token::new(kind, &self.source[start..self.pos], Span::new(start, self.pos)))
+        Ok(Token::new(
+            kind,
+            &self.source[start..self.pos],
+            Span::new(start, self.pos),
+        ))
     }
 
     fn read_identifier(&mut self, start: usize) -> Token {
@@ -160,7 +168,11 @@ impl<'a> Lexer<'a> {
 
         let lexeme = self.source[content_start..self.pos].to_string();
         self.advance(); // closing quote
-        Ok(Token::new(TokenKind::String, lexeme, Span::new(start, self.pos)))
+        Ok(Token::new(
+            TokenKind::String,
+            lexeme,
+            Span::new(start, self.pos),
+        ))
     }
 
     fn skip_whitespace_and_comments(&mut self) {

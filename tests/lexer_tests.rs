@@ -95,8 +95,17 @@ fn punctuation() {
     assert_eq!(
         kinds("( ) { } [ ] , : ; ."),
         vec![
-            LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Comma,
-            Colon, Semicolon, Dot, Eof
+            LeftParen,
+            RightParen,
+            LeftBrace,
+            RightBrace,
+            LeftBracket,
+            RightBracket,
+            Comma,
+            Colon,
+            Semicolon,
+            Dot,
+            Eof
         ]
     );
 }

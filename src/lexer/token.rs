@@ -137,7 +137,10 @@ impl TokenKind {
 
     /// Whether this kind's printed form carries its lexeme, e.g. `IDENTIFIER("x")`.
     fn carries_lexeme(&self) -> bool {
-        matches!(self, TokenKind::Identifier | TokenKind::Integer | TokenKind::String)
+        matches!(
+            self,
+            TokenKind::Identifier | TokenKind::Integer | TokenKind::String
+        )
     }
 }
 
@@ -156,7 +159,11 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, lexeme: impl Into<String>, span: Span) -> Self {
-        Self { kind, lexeme: lexeme.into(), span }
+        Self {
+            kind,
+            lexeme: lexeme.into(),
+            span,
+        }
     }
 }
 

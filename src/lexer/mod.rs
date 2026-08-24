@@ -2,7 +2,7 @@
 //! See `docs/lexer.md` for the specification this module implements.
 
 pub mod error;
-mod lexer;
+mod scan;
 pub mod token;
 
-pub use lexer::tokenize;
+pub use scan::tokenize;
