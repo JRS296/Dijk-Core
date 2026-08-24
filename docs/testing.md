@@ -36,6 +36,7 @@ From `dijk-core/`:
 ```bash
 # Linux/macOS
 ./target/release/dijk lex examples/hello.dk
+./target/release/dijk lex examples/hello.dijk
 ./target/release/dijk lex examples/unexpected_character.dk
 ./target/release/dijk lex examples/unterminated_string.dk
 ```
@@ -43,8 +44,18 @@ From `dijk-core/`:
 ```powershell
 # Windows PowerShell
 .\target\release\dijk.exe lex examples\hello.dk
+.\target\release\dijk.exe lex examples\hello.dijk
 .\target\release\dijk.exe lex examples\unexpected_character.dk
 .\target\release\dijk.exe lex examples\unterminated_string.dk
+```
+
+`hello.dk` and `hello.dijk` have identical contents — `dijk lex` accepts
+both extensions (see `docs/language.md`). Anything else (`.txt`, no
+extension, etc.) is rejected before the file is even read:
+
+```text
+$ dijk lex examples/hello.txt
+dijk: 'examples/hello.txt' is not a Dijk source file (expected .dk or .dijk)
 ```
 
 `hello.dk` should print a clean token stream ending in `EOF`. The other two

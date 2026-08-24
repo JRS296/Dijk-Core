@@ -20,7 +20,7 @@ COMMANDS:
     --version    Print the Dijk version
     --help       Print this message
     doctor       Report the current state of the toolchain
-    lex <file>   Print the token stream for a Dijk source file
+    lex <file>   Print the token stream for a Dijk source file (.dk or .dijk)
 ";
 
 fn main() {
@@ -53,7 +53,24 @@ fn doctor() {
     println!("Compiler: Not yet implemented");
 }
 
+/// File extensions recognized as Dijk source. `.dk` is the short form for
+/// everyday use; `.dijk` is the unambiguous long form. Both name the same
+/// language.
+const SOURCE_EXTENSIONS: [&str; 2] = ["dk", "dijk"];
+
+fn is_dijk_source_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| SOURCE_EXTENSIONS.contains(&ext))
+}
+
 fn lex(path: &str) {
+    if !is_dijk_source_file(path) {
+        eprintln!("dijk: '{path}' is not a Dijk source file (expected .dk or .dijk)");
+        std::process::exit(1);
+    }
+
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
         Err(err) => {
@@ -74,5 +91,26 @@ fn lex(path: &str) {
             eprint!("{}", error.render(path, &source));
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_dijk_source_file;
+
+    #[test]
+    fn accepts_dk_and_dijk() {
+        assert!(is_dijk_source_file("hello.dk"));
+        assert!(is_dijk_source_file("hello.dijk"));
+        assert!(is_dijk_source_file("examples/hello.dk"));
+        assert!(is_dijk_source_file("examples\\hello.dijk"));
+    }
+
+    #[test]
+    fn rejects_anything_else() {
+        assert!(!is_dijk_source_file("hello.txt"));
+        assert!(!is_dijk_source_file("hello"));
+        assert!(!is_dijk_source_file("hello.dk.bak"));
+        assert!(!is_dijk_source_file("hello.DK"));
     }
 }

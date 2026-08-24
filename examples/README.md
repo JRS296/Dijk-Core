@@ -5,6 +5,8 @@ Small `.dk` fixtures for manually exercising the lexer with `dijk lex`. See
 try your own cases.
 
 - `hello.dk` — a valid program exercising most token categories at once.
+- `hello.dijk` — identical to `hello.dk`, demonstrating that `dijk lex`
+  accepts the `.dijk` extension too (see [../docs/language.md](../docs/language.md)).
 - `unexpected_character.dk` — triggers the `unexpected character` lexical
   error and its diagnostic rendering.
 - `unterminated_string.dk` — triggers the `unterminated string literal`

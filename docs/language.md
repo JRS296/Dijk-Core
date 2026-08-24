@@ -31,6 +31,20 @@ fn add(a: i32, b: i32) -> i32 {
 > this project. Time is better spent on the mechanisms syntax describes than
 > on inventing punctuation.
 
+## File extension
+
+A Dijk source file uses either extension:
+
+```text
+.dk      short form, for everyday use
+.dijk    long form, unambiguous
+```
+
+Both name the same language; `dijk lex` (and later `dijk parse`, `dijk
+build`, ...) accept either. `.dk` is expected to be the convention used in
+practice; `.dijk` exists for contexts where `.dk` alone would be
+ambiguous or where the fuller name is preferred.
+
 ## Initial Core feature boundary
 
 Dijk Core initially targets:

@@ -2,6 +2,7 @@
 *.pdb
 .DS_Store
 
-# Scratch .dk files at the repo root, for ad hoc manual lexer testing.
+# Scratch .dk/.dijk files at the repo root, for ad hoc manual lexer testing.
 # Fixtures meant to be kept belong in examples/ instead.
 /*.dk
+/*.dijk

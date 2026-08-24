@@ -17,9 +17,9 @@ Dijk
 implementation teaches how a language and its compiler are actually built.
 
 This repository has completed **Step 1 — Lexical Analysis**: source text
-can be turned into a token stream via `dijk lex`. There is no parser or
-compiler yet. See [docs/](docs/) for the philosophy, design constraints,
-architecture, and roadmap that govern implementation.
+(`.dk` or `.dijk` files) can be turned into a token stream via `dijk lex`.
+There is no parser or compiler yet. See [docs/](docs/) for the philosophy,
+design constraints, architecture, and roadmap that govern implementation.
 
 ## Project trajectory
 
