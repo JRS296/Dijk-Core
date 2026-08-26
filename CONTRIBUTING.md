@@ -24,7 +24,7 @@ likely belongs in `dijk-stdlib` or `dijk+` instead.
 ## Process
 
 This project does not yet have CI, a formal review process, or released
-versions beyond `0.0.2`. Until then:
+versions beyond `0.0.3`. Until then:
 
 1. Open an issue or discussion describing the change and which roadmap
    phase (see [docs/roadmap.md](docs/roadmap.md)) it belongs to.

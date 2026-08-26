@@ -1,6 +1,6 @@
 # Dijk Core
 
-**Dijk 0.0.2** — experimental / educational development release. Grammar,
+**Dijk 0.0.3** — experimental / educational development release. Grammar,
 ABI, standard library, compiler compatibility, and runtime behavior are
 all still unstable. See [CHANGELOG.md](CHANGELOG.md).
 
@@ -26,7 +26,7 @@ implementation teaches how a language and its compiler are actually built.
 ✓ Project foundations (charter, philosophy, architecture, roadmap)
 ✓ Lexical analysis (dijk lex, .dk and .dijk source files)
 ✓ Parsing (dijk parse)
-✓ AST (dijk ast — not yet tagged as a release)
+✓ AST (dijk ast)
 □ Semantic analysis
 □ Type checking
 □ Interpretation
@@ -34,12 +34,11 @@ implementation teaches how a language and its compiler are actually built.
 □ Native compilation
 ```
 
-The last tagged release, `0.0.2`, has a parser but no formal AST — its
-parser built a deliberately provisional "syntax representation" instead
-(see [docs/parser.md](docs/parser.md)). The AST is implemented on top of
-that in this checkout; see [CHANGELOG.md](CHANGELOG.md#unreleased) and
-[docs/ast.md](docs/ast.md). See [docs/](docs/) for the philosophy, design
-constraints, architecture, and roadmap that govern implementation.
+`0.0.3` is intentionally incomplete — there is no semantic analysis, type
+checking, or execution yet; the AST only represents what was written, not
+whether it means anything (see [docs/ast.md](docs/ast.md)). See
+[docs/](docs/) for the philosophy, design constraints, architecture, and
+roadmap that govern implementation.
 
 ## Project trajectory
 

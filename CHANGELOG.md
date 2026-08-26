@@ -1,8 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.3] - 2026-08-27
 
-Not yet tagged as a release. In progress toward `dijk-0.0.3` — the AST.
+Experimental / educational development release. Grammar, ABI, standard
+library, compiler compatibility, and runtime behavior are all still
+unstable.
 
 ### Added
 
@@ -24,12 +26,22 @@ Not yet tagged as a release. In progress toward `dijk-0.0.3` — the AST.
 - `dijk ast` command, printing the AST plus function/statement/expression
   counts
 
+### Testing
+
+- `tests/ast_tests.rs`: AST construction, equality, span accessors, and
+  traversal over hand-built trees, independent of the parser
+- Additional `tests/parser_tests.rs` coverage: AST source-span
+  correctness (function/parameter/expression spans, nested-span growth),
+  integer-to-`i64` conversion and overflow, and traversal over
+  parser-produced ASTs
+
 ### Documentation
 
 - `docs/ast.md`: the AST shape, parse-tree-vs-AST, deviations from a
   "typical" example AST, invariants, and traversal
 - `docs/parser.md` updated to describe the parser building the AST
   directly, with the retired provisional-syntax step noted as history
+- `dijkstra-book` Chapter 07 — Abstract Syntax Trees
 
 ## [0.0.2] - 2026-08-27
 

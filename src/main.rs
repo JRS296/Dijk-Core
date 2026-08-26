@@ -1,8 +1,8 @@
 //! Dijk Core CLI.
 //!
-//! There is no compiler yet — only lexical analysis and parsing. This
-//! binary is the entry point for observing each compiler stage as it is
-//! built.
+//! There is no compiler yet — only lexical analysis, parsing, and the
+//! AST. This binary is the entry point for observing each compiler stage
+//! as it is built.
 
 mod ast;
 mod diagnostics;
@@ -10,10 +10,10 @@ mod lexer;
 mod parser;
 mod pretty;
 
-const VERSION: &str = "0.0.2";
+const VERSION: &str = "0.0.3";
 
 const HELP: &str = "\
-Dijk 0.0.2
+Dijk 0.0.3
 
 Dijk Core is building its compiler one stage at a time. See docs/ for the
 philosophy, design constraints, architecture, and roadmap.
