@@ -1,12 +1,9 @@
 //! Dijk's abstract syntax tree: the compiler's structured representation
-//! of a program, once the parser's provisional syntax representation has
-//! been formalized. See `docs/ast.md`.
-//!
-//! This module is not wired into the crate yet — see the AST milestone's
-//! commit progression. It becomes load-bearing once the parser is
-//! rewritten to construct these nodes directly.
+//! of a program. The parser (`crate::parser`) constructs these nodes
+//! directly. See `docs/ast.md`.
 
 pub mod declaration;
 pub mod expression;
 pub mod statement;
 pub mod types;
+pub mod visit;
