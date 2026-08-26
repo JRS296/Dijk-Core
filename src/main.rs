@@ -9,10 +9,10 @@ mod lexer;
 mod parser;
 mod pretty;
 
-const VERSION: &str = "0.0.1";
+const VERSION: &str = "0.0.2";
 
 const HELP: &str = "\
-Dijk 0.0.1
+Dijk 0.0.2
 
 Dijk Core is building its compiler one stage at a time. See docs/ for the
 philosophy, design constraints, architecture, and roadmap.

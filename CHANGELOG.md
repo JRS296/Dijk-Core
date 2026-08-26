@@ -1,8 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.2] - 2026-08-27
 
-Not yet tagged as a release. In progress toward `dijk-0.0.2` — parsing.
+Experimental / educational development release. Grammar, ABI, standard
+library, compiler compatibility, and runtime behavior are all still
+unstable.
 
 ### Added
 
