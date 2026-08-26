@@ -16,6 +16,7 @@ mod parser;
 use ast::declaration::{Declaration, Function, Program};
 use ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use ast::statement::Statement;
+use ast::visit::{self, Visitor};
 use parser::error::{ParseError, ParseErrorKind};
 
 /// Lex and parse `source`, asserting the lexer itself produced no errors
@@ -540,4 +541,27 @@ fn a_broken_function_does_not_prevent_the_next_one_from_parsing() {
     let fns = functions(&program);
     assert_eq!(fns.len(), 1);
     assert_eq!(fns[0].name, "ok");
+}
+
+// --- traversal ---
+
+/// Counts every function visited, deferring everything else to the
+/// default (walking) implementation — confirming a parsed program is
+/// actually walkable by `ast::visit::Visitor`, not just constructible.
+struct FunctionCounter(usize);
+
+impl Visitor for FunctionCounter {
+    fn visit_function(&mut self, function: &Function) {
+        self.0 += 1;
+        visit::walk_function(self, function);
+    }
+}
+
+#[test]
+fn visitor_walks_every_function_in_a_parsed_program() {
+    let (program, errors) = parse_ok("fn a() {}\nfn b() { let x = 1 + 2; }\n");
+    assert!(errors.is_empty());
+    let mut counter = FunctionCounter(0);
+    counter.visit_program(&program);
+    assert_eq!(counter.0, 2);
 }

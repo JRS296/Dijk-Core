@@ -26,7 +26,8 @@ COMMANDS:
     --help       Print this message
     doctor       Report the current state of the toolchain
     lex <file>   Print the token stream for a Dijk source file (.dk or .dijk)
-    parse <file> Print the syntax tree for a Dijk source file (.dk or .dijk)
+    parse <file> Print the AST for a Dijk source file (.dk or .dijk)
+    ast <file>   Print the AST plus node counts, for the same file
 ";
 
 fn main() {
@@ -51,6 +52,14 @@ fn main() {
                 std::process::exit(1);
             };
             parse(&path);
+        }
+        Some("ast") => {
+            let Some(path) = args.next() else {
+                eprintln!("dijk: 'ast' requires a file argument");
+                eprintln!("usage: dijk ast <file>");
+                std::process::exit(1);
+            };
+            ast(&path);
         }
         Some(other) => {
             eprintln!("dijk: unrecognized argument '{other}'");
@@ -124,6 +133,38 @@ fn parse(path: &str) {
 
     let (program, parse_errors) = parser::parse(tokens);
     print!("{}", pretty::print_program(&program));
+
+    if !parse_errors.is_empty() {
+        eprintln!();
+        for error in &parse_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+}
+
+/// Same representation as `parse`, plus a small summary of how many
+/// functions, statements, and expressions the program contains.
+fn ast(path: &str) {
+    let source = read_source_file(path);
+    let (tokens, lex_errors) = lexer::tokenize(&source);
+
+    if !lex_errors.is_empty() {
+        for error in &lex_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+
+    let (program, parse_errors) = parser::parse(tokens);
+    print!("{}", pretty::print_program(&program));
+
+    let counts = pretty::count_nodes(&program);
+    println!();
+    println!(
+        "{} function(s), {} statement(s), {} expression(s)",
+        counts.functions, counts.statements, counts.expressions
+    );
 
     if !parse_errors.is_empty() {
         eprintln!();

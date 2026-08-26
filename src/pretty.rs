@@ -5,6 +5,7 @@
 use crate::ast::declaration::{Declaration, Function, Program};
 use crate::ast::expression::Expression;
 use crate::ast::statement::Statement;
+use crate::ast::visit::{self, Visitor};
 
 enum Doc {
     Leaf(String),
@@ -17,6 +18,39 @@ pub fn print_program(program: &Program) -> String {
         program.declarations.iter().map(declaration_doc).collect(),
     );
     render(&doc)
+}
+
+/// How many functions, statements, and expressions a program contains,
+/// as counted by walking it with [`Visitor`] — a small, real use of the
+/// traversal machinery in `crate::ast::visit`, for `dijk ast`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct NodeCounts {
+    pub functions: usize,
+    pub statements: usize,
+    pub expressions: usize,
+}
+
+impl Visitor for NodeCounts {
+    fn visit_function(&mut self, function: &Function) {
+        self.functions += 1;
+        visit::walk_function(self, function);
+    }
+
+    fn visit_statement(&mut self, stmt: &Statement) {
+        self.statements += 1;
+        visit::walk_statement(self, stmt);
+    }
+
+    fn visit_expression(&mut self, expr: &Expression) {
+        self.expressions += 1;
+        visit::walk_expression(self, expr);
+    }
+}
+
+pub fn count_nodes(program: &Program) -> NodeCounts {
+    let mut counts = NodeCounts::default();
+    counts.visit_program(program);
+    counts
 }
 
 fn declaration_doc(decl: &Declaration) -> Doc {
