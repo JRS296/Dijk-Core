@@ -1,22 +1,24 @@
 use super::error::{ParseError, ParseErrorKind};
-use super::syntax::{
-    BinaryOp, Block, ElseBranch, Expr, Function, Param, Program, Stmt, Type, UnaryOp,
-};
+use crate::ast::declaration::{Declaration, Function, Param, Program};
+use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
+use crate::ast::statement::Statement;
+use crate::ast::types::Type;
 use crate::lexer::token::{Span, Token, TokenKind};
 
 /// Parse a complete token stream (as produced by [`crate::lexer::tokenize`])
-/// into a [`Program`], alongside any parse errors encountered.
+/// directly into Dijk's AST (`crate::ast`), alongside any parse errors
+/// encountered.
 ///
 /// Parsing continues past an error where practical (see `docs/parser.md`
 /// for the recovery strategy), so a single pass can surface more than one
 /// problem. `tokens` must end with an `Eof` token, as the lexer guarantees.
 pub fn parse(tokens: Vec<Token>) -> (Program, Vec<ParseError>) {
     let mut parser = Parser::new(tokens);
-    let mut functions = Vec::new();
+    let mut declarations = Vec::new();
 
     while !parser.is_at_end() {
         match parser.parse_function() {
-            Ok(function) => functions.push(function),
+            Ok(function) => declarations.push(Declaration::Function(function)),
             Err(err) => {
                 parser.errors.push(err);
                 parser.synchronize_to_declaration();
@@ -25,7 +27,7 @@ pub fn parse(tokens: Vec<Token>) -> (Program, Vec<ParseError>) {
     }
 
     parser.errors.sort_by_key(|e| e.span.start);
-    (Program { functions }, parser.errors)
+    (Program { declarations }, parser.errors)
 }
 
 struct Parser {
@@ -144,8 +146,8 @@ impl Parser {
             None
         };
 
-        let body = self.parse_block()?;
-        let span = Span::new(fn_tok.span.start, body.span.end);
+        let (body, body_span) = self.parse_block()?;
+        let span = Span::new(fn_tok.span.start, body_span.end);
         Ok(Function {
             name: name_tok.lexeme,
             params,
@@ -191,7 +193,12 @@ impl Parser {
         })
     }
 
-    fn parse_block(&mut self) -> Result<Block, ParseError> {
+    /// Parses a `{ ... }` block, returning its statements alongside the
+    /// span of the block as a whole (open brace to close brace). The AST
+    /// has no `Block` node — see `docs/ast.md` — so that span exists only
+    /// to let callers compute their own enclosing span (a function's, an
+    /// `if`'s, ...); it is not retained anywhere.
+    fn parse_block(&mut self) -> Result<(Vec<Statement>, Span), ParseError> {
         let open = self.expect(TokenKind::LeftBrace, "'{'")?;
         let mut statements = Vec::new();
 
@@ -207,12 +214,12 @@ impl Parser {
 
         let close = self.expect(TokenKind::RightBrace, "'}'")?;
         let span = Span::new(open.span.start, close.span.end);
-        Ok(Block { statements, span })
+        Ok((statements, span))
     }
 
     // --- statements ---
 
-    fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match self.peek_kind() {
             TokenKind::Let => self.parse_let_statement(),
             TokenKind::Return => self.parse_return_statement(),
@@ -222,10 +229,10 @@ impl Parser {
         }
     }
 
-    fn parse_let_statement(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_let_statement(&mut self) -> Result<Statement, ParseError> {
         let let_tok = self.advance();
         let name_tok = self.expect(TokenKind::Identifier, "identifier")?;
-        let ty = if self.match_token(TokenKind::Colon) {
+        let type_annotation = if self.match_token(TokenKind::Colon) {
             Some(self.parse_type()?)
         } else {
             None
@@ -234,15 +241,15 @@ impl Parser {
         let value = self.parse_expression()?;
         let semi = self.expect(TokenKind::Semicolon, "';'")?;
         let span = Span::new(let_tok.span.start, semi.span.end);
-        Ok(Stmt::Let {
+        Ok(Statement::Let {
             name: name_tok.lexeme,
-            ty,
+            type_annotation,
             value,
             span,
         })
     }
 
-    fn parse_return_statement(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_return_statement(&mut self) -> Result<Statement, ParseError> {
         let return_tok = self.advance();
         let value = if self.check(TokenKind::Semicolon) {
             None
@@ -251,55 +258,58 @@ impl Parser {
         };
         let semi = self.expect(TokenKind::Semicolon, "';'")?;
         let span = Span::new(return_tok.span.start, semi.span.end);
-        Ok(Stmt::Return { value, span })
+        Ok(Statement::Return { value, span })
     }
 
-    fn parse_if_statement(&mut self) -> Result<Stmt, ParseError> {
+    /// `else if` is desugared here, not represented specially: an `else
+    /// if condition { ... }` becomes an `else_branch` containing exactly
+    /// one statement, itself an `If`. See `crate::ast::statement`.
+    fn parse_if_statement(&mut self) -> Result<Statement, ParseError> {
         let if_tok = self.advance();
         let condition = self.parse_expression()?;
-        let then_block = self.parse_block()?;
-        let mut end = then_block.span.end;
+        let (then_branch, then_span) = self.parse_block()?;
+        let mut end = then_span.end;
 
         let else_branch = if self.match_token(TokenKind::Else) {
             if self.check(TokenKind::If) {
                 let nested = self.parse_if_statement()?;
                 end = nested.span().end;
-                Some(ElseBranch::If(Box::new(nested)))
+                Some(vec![nested])
             } else {
-                let block = self.parse_block()?;
-                end = block.span.end;
-                Some(ElseBranch::Block(block))
+                let (statements, span) = self.parse_block()?;
+                end = span.end;
+                Some(statements)
             }
         } else {
             None
         };
 
         let span = Span::new(if_tok.span.start, end);
-        Ok(Stmt::If {
+        Ok(Statement::If {
             condition,
-            then_block,
+            then_branch,
             else_branch,
             span,
         })
     }
 
-    fn parse_while_statement(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_while_statement(&mut self) -> Result<Statement, ParseError> {
         let while_tok = self.advance();
         let condition = self.parse_expression()?;
-        let body = self.parse_block()?;
-        let span = Span::new(while_tok.span.start, body.span.end);
-        Ok(Stmt::While {
+        let (body, body_span) = self.parse_block()?;
+        let span = Span::new(while_tok.span.start, body_span.end);
+        Ok(Statement::While {
             condition,
             body,
             span,
         })
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
         let expr = self.parse_expression()?;
         let semi = self.expect(TokenKind::Semicolon, "';'")?;
         let span = Span::new(expr.span().start, semi.span.end);
-        Ok(Stmt::Expression { expr, span })
+        Ok(Statement::Expression { expr, span })
     }
 
     // --- expressions, by ascending precedence ---
@@ -314,20 +324,20 @@ impl Parser {
     // primary     ::= INTEGER | STRING | "true" | "false" | IDENTIFIER
     //               | "(" expression ")"
 
-    fn parse_expression(&mut self) -> Result<Expr, ParseError> {
+    fn parse_expression(&mut self) -> Result<Expression, ParseError> {
         self.parse_assignment()
     }
 
-    fn parse_assignment(&mut self) -> Result<Expr, ParseError> {
+    fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
         let expr = self.parse_equality()?;
 
         if self.match_token(TokenKind::Equal) {
             let equals_span = self.previous().span;
             return match expr {
-                Expr::Identifier(name, name_span) => {
+                Expression::Identifier(name, name_span) => {
                     let value = self.parse_assignment()?;
                     let span = Span::new(name_span.start, value.span().end);
-                    Ok(Expr::Assign {
+                    Ok(Expression::Assign {
                         name,
                         value: Box::new(value),
                         span,
@@ -343,21 +353,21 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_equality(&mut self) -> Result<Expr, ParseError> {
+    fn parse_equality(&mut self) -> Result<Expression, ParseError> {
         let mut expr = self.parse_comparison()?;
         loop {
-            let op = if self.match_token(TokenKind::EqualEqual) {
-                BinaryOp::Eq
+            let operator = if self.match_token(TokenKind::EqualEqual) {
+                BinaryOperator::Eq
             } else if self.match_token(TokenKind::BangEqual) {
-                BinaryOp::NotEq
+                BinaryOperator::NotEq
             } else {
                 break;
             };
             let right = self.parse_comparison()?;
             let span = Span::new(expr.span().start, right.span().end);
-            expr = Expr::Binary {
-                op,
+            expr = Expression::Binary {
                 left: Box::new(expr),
+                operator,
                 right: Box::new(right),
                 span,
             };
@@ -365,25 +375,25 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
+    fn parse_comparison(&mut self) -> Result<Expression, ParseError> {
         let mut expr = self.parse_term()?;
         loop {
-            let op = if self.match_token(TokenKind::Less) {
-                BinaryOp::Lt
+            let operator = if self.match_token(TokenKind::Less) {
+                BinaryOperator::Lt
             } else if self.match_token(TokenKind::LessEqual) {
-                BinaryOp::Le
+                BinaryOperator::Le
             } else if self.match_token(TokenKind::Greater) {
-                BinaryOp::Gt
+                BinaryOperator::Gt
             } else if self.match_token(TokenKind::GreaterEqual) {
-                BinaryOp::Ge
+                BinaryOperator::Ge
             } else {
                 break;
             };
             let right = self.parse_term()?;
             let span = Span::new(expr.span().start, right.span().end);
-            expr = Expr::Binary {
-                op,
+            expr = Expression::Binary {
                 left: Box::new(expr),
+                operator,
                 right: Box::new(right),
                 span,
             };
@@ -391,21 +401,21 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_term(&mut self) -> Result<Expr, ParseError> {
+    fn parse_term(&mut self) -> Result<Expression, ParseError> {
         let mut expr = self.parse_factor()?;
         loop {
-            let op = if self.match_token(TokenKind::Plus) {
-                BinaryOp::Add
+            let operator = if self.match_token(TokenKind::Plus) {
+                BinaryOperator::Add
             } else if self.match_token(TokenKind::Minus) {
-                BinaryOp::Sub
+                BinaryOperator::Sub
             } else {
                 break;
             };
             let right = self.parse_factor()?;
             let span = Span::new(expr.span().start, right.span().end);
-            expr = Expr::Binary {
-                op,
+            expr = Expression::Binary {
                 left: Box::new(expr),
+                operator,
                 right: Box::new(right),
                 span,
             };
@@ -413,21 +423,21 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_factor(&mut self) -> Result<Expr, ParseError> {
+    fn parse_factor(&mut self) -> Result<Expression, ParseError> {
         let mut expr = self.parse_unary()?;
         loop {
-            let op = if self.match_token(TokenKind::Star) {
-                BinaryOp::Mul
+            let operator = if self.match_token(TokenKind::Star) {
+                BinaryOperator::Mul
             } else if self.match_token(TokenKind::Slash) {
-                BinaryOp::Div
+                BinaryOperator::Div
             } else {
                 break;
             };
             let right = self.parse_unary()?;
             let span = Span::new(expr.span().start, right.span().end);
-            expr = Expr::Binary {
-                op,
+            expr = Expression::Binary {
                 left: Box::new(expr),
+                operator,
                 right: Box::new(right),
                 span,
             };
@@ -435,21 +445,21 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_unary(&mut self) -> Result<Expr, ParseError> {
-        let op = if self.check(TokenKind::Minus) {
-            Some(UnaryOp::Neg)
+    fn parse_unary(&mut self) -> Result<Expression, ParseError> {
+        let operator = if self.check(TokenKind::Minus) {
+            Some(UnaryOperator::Neg)
         } else if self.check(TokenKind::Bang) {
-            Some(UnaryOp::Not)
+            Some(UnaryOperator::Not)
         } else {
             None
         };
 
-        if let Some(op) = op {
+        if let Some(operator) = operator {
             let op_span = self.advance().span;
             let operand = self.parse_unary()?;
             let span = Span::new(op_span.start, operand.span().end);
-            return Ok(Expr::Unary {
-                op,
+            return Ok(Expression::Unary {
+                operator,
                 operand: Box::new(operand),
                 span,
             });
@@ -458,35 +468,46 @@ impl Parser {
         self.parse_primary()
     }
 
-    fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+    /// Parenthesized expressions are consumed here but produce no node of
+    /// their own: `(a + b) * c` and an already-nested `a + b` under `*`
+    /// yield the identical `Expression` value. See
+    /// `crate::ast::expression`.
+    fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         let token = self.peek().clone();
         match token.kind {
             TokenKind::Integer => {
                 self.advance();
-                Ok(Expr::Integer(token.lexeme, token.span))
+                let value = token.lexeme.parse::<i64>().map_err(|_| {
+                    ParseError::new(
+                        ParseErrorKind::InvalidIntegerLiteral {
+                            lexeme: token.lexeme.clone(),
+                        },
+                        token.span,
+                    )
+                })?;
+                Ok(Expression::Integer(value, token.span))
             }
             TokenKind::String => {
                 self.advance();
-                Ok(Expr::String(token.lexeme, token.span))
+                Ok(Expression::String(token.lexeme, token.span))
             }
             TokenKind::True => {
                 self.advance();
-                Ok(Expr::Bool(true, token.span))
+                Ok(Expression::Boolean(true, token.span))
             }
             TokenKind::False => {
                 self.advance();
-                Ok(Expr::Bool(false, token.span))
+                Ok(Expression::Boolean(false, token.span))
             }
             TokenKind::Identifier => {
                 self.advance();
-                Ok(Expr::Identifier(token.lexeme, token.span))
+                Ok(Expression::Identifier(token.lexeme, token.span))
             }
             TokenKind::LeftParen => {
                 self.advance();
                 let inner = self.parse_expression()?;
-                let close = self.expect(TokenKind::RightParen, "')'")?;
-                let span = Span::new(token.span.start, close.span.end);
-                Ok(Expr::Grouping(Box::new(inner), span))
+                self.expect(TokenKind::RightParen, "')'")?;
+                Ok(inner)
             }
             _ => Err(self.error_at_current("expression")),
         }

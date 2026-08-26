@@ -1,9 +1,11 @@
 //! Tests for parsing. See `docs/parser.md` for the grammar these tests
-//! verify against.
+//! verify against, and `docs/ast.md` for the AST shape they check.
 
 // None of these modules are part of a library's public surface (dijk is a
 // binary crate), so these tests include them directly by path, mirroring
 // their layout as siblings under the crate root in src/main.rs.
+#[path = "../src/ast/mod.rs"]
+mod ast;
 #[path = "../src/diagnostics.rs"]
 mod diagnostics;
 #[path = "../src/lexer/mod.rs"]
@@ -11,8 +13,10 @@ mod lexer;
 #[path = "../src/parser/mod.rs"]
 mod parser;
 
+use ast::declaration::{Declaration, Function, Program};
+use ast::expression::{BinaryOperator, Expression, UnaryOperator};
+use ast::statement::Statement;
 use parser::error::{ParseError, ParseErrorKind};
-use parser::syntax::{BinaryOp, ElseBranch, Expr, Program, Stmt};
 
 /// Lex and parse `source`, asserting the lexer itself produced no errors
 /// (a failure there would mean the test fixture is broken, not the parser).
@@ -25,11 +29,27 @@ fn parse_ok(source: &str) -> (Program, Vec<ParseError>) {
     parser::parse(tokens)
 }
 
-fn single_function(source: &str) -> parser::syntax::Function {
+fn functions(program: &Program) -> Vec<&Function> {
+    program
+        .declarations
+        .iter()
+        .map(|d| match d {
+            Declaration::Function(f) => f,
+        })
+        .collect()
+}
+
+fn single_function(source: &str) -> Function {
     let (program, errors) = parse_ok(source);
     assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
-    assert_eq!(program.functions.len(), 1, "expected exactly one function");
-    program.functions.into_iter().next().unwrap()
+    assert_eq!(
+        program.declarations.len(),
+        1,
+        "expected exactly one declaration"
+    );
+    match program.declarations.into_iter().next().unwrap() {
+        Declaration::Function(f) => f,
+    }
 }
 
 // --- basic programs ---
@@ -38,7 +58,7 @@ fn single_function(source: &str) -> parser::syntax::Function {
 fn empty_program_has_no_functions() {
     let (program, errors) = parse_ok("");
     assert!(errors.is_empty());
-    assert!(program.functions.is_empty());
+    assert!(program.declarations.is_empty());
 }
 
 #[test]
@@ -47,7 +67,7 @@ fn empty_function() {
     assert_eq!(f.name, "main");
     assert!(f.params.is_empty());
     assert!(f.return_type.is_none());
-    assert!(f.body.statements.is_empty());
+    assert!(f.body.is_empty());
 }
 
 // --- functions ---
@@ -61,10 +81,10 @@ fn function_with_parameters_and_return_type() {
     assert_eq!(f.params[0].ty.name, "i32");
     assert_eq!(f.params[1].name, "b");
     assert_eq!(f.return_type.as_ref().unwrap().name, "i32");
-    assert_eq!(f.body.statements.len(), 1);
+    assert_eq!(f.body.len(), 1);
     assert!(matches!(
-        &f.body.statements[0],
-        Stmt::Return { value: Some(_), .. }
+        &f.body[0],
+        Statement::Return { value: Some(_), .. }
     ));
 }
 
@@ -72,7 +92,10 @@ fn function_with_parameters_and_return_type() {
 fn multiple_functions() {
     let (program, errors) = parse_ok("fn a() {}\nfn b() {}\nfn c() {}\n");
     assert!(errors.is_empty());
-    let names: Vec<&str> = program.functions.iter().map(|f| f.name.as_str()).collect();
+    let names: Vec<&str> = functions(&program)
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
     assert_eq!(names, vec!["a", "b", "c"]);
 }
 
@@ -81,13 +104,16 @@ fn multiple_functions() {
 #[test]
 fn let_without_type_annotation() {
     let f = single_function("fn main() {\n    let x = 10;\n}\n");
-    match &f.body.statements[0] {
-        Stmt::Let {
-            name, ty, value, ..
+    match &f.body[0] {
+        Statement::Let {
+            name,
+            type_annotation,
+            value,
+            ..
         } => {
             assert_eq!(name, "x");
-            assert!(ty.is_none());
-            assert!(matches!(value, Expr::Integer(lexeme, _) if lexeme == "10"));
+            assert!(type_annotation.is_none());
+            assert!(matches!(value, Expression::Integer(10, _)));
         }
         other => panic!("expected Let, got {other:?}"),
     }
@@ -96,16 +122,19 @@ fn let_without_type_annotation() {
 #[test]
 fn let_with_type_annotation() {
     let f = single_function("fn main() {\n    let x: i32 = 10;\n    let y: i32 = x + 20;\n}\n");
-    match &f.body.statements[1] {
-        Stmt::Let {
-            name, ty, value, ..
+    match &f.body[1] {
+        Statement::Let {
+            name,
+            type_annotation,
+            value,
+            ..
         } => {
             assert_eq!(name, "y");
-            assert_eq!(ty.as_ref().unwrap().name, "i32");
+            assert_eq!(type_annotation.as_ref().unwrap().name, "i32");
             assert!(matches!(
                 value,
-                Expr::Binary {
-                    op: BinaryOp::Add,
+                Expression::Binary {
+                    operator: BinaryOperator::Add,
                     ..
                 }
             ));
@@ -116,10 +145,10 @@ fn let_with_type_annotation() {
 
 // --- expressions and precedence ---
 
-fn single_expr_statement(source: &str) -> Expr {
+fn single_expr_statement(source: &str) -> Expression {
     let f = single_function(&format!("fn main() {{\n    {source};\n}}\n"));
-    match f.body.statements.into_iter().next().unwrap() {
-        Stmt::Expression { expr, .. } => expr,
+    match f.body.into_iter().next().unwrap() {
+        Statement::Expression { expr, .. } => expr,
         other => panic!("expected an expression statement, got {other:?}"),
     }
 }
@@ -128,15 +157,15 @@ fn single_expr_statement(source: &str) -> Expr {
 fn addition_and_multiplication() {
     assert!(matches!(
         single_expr_statement("a + b"),
-        Expr::Binary {
-            op: BinaryOp::Add,
+        Expression::Binary {
+            operator: BinaryOperator::Add,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("a * b"),
-        Expr::Binary {
-            op: BinaryOp::Mul,
+        Expression::Binary {
+            operator: BinaryOperator::Mul,
             ..
         }
     ));
@@ -146,17 +175,17 @@ fn addition_and_multiplication() {
 fn multiplication_binds_tighter_than_addition() {
     // a + b * c must parse as a + (b * c), not (a + b) * c.
     match single_expr_statement("a + b * c") {
-        Expr::Binary {
-            op: BinaryOp::Add,
+        Expression::Binary {
+            operator: BinaryOperator::Add,
             left,
             right,
             ..
         } => {
-            assert!(matches!(*left, Expr::Identifier(ref n, _) if n == "a"));
+            assert!(matches!(*left, Expression::Identifier(ref n, _) if n == "a"));
             assert!(matches!(
                 *right,
-                Expr::Binary {
-                    op: BinaryOp::Mul,
+                Expression::Binary {
+                    operator: BinaryOperator::Mul,
                     ..
                 }
             ));
@@ -167,29 +196,48 @@ fn multiplication_binds_tighter_than_addition() {
 
 #[test]
 fn parentheses_override_precedence() {
-    // (a + b) * c must parse as (a + b) * c, with the addition grouped.
+    // (a + b) * c must parse as (a + b) * c, with the addition grouped —
+    // and, since the AST has no Grouping node, the left side is a plain
+    // Binary(Add) directly, not wrapped in anything.
     match single_expr_statement("(a + b) * c") {
-        Expr::Binary {
-            op: BinaryOp::Mul,
+        Expression::Binary {
+            operator: BinaryOperator::Mul,
             left,
             right,
             ..
         } => {
-            assert!(matches!(*right, Expr::Identifier(ref n, _) if n == "c"));
-            match *left {
-                Expr::Grouping(inner, _) => {
-                    assert!(matches!(
-                        *inner,
-                        Expr::Binary {
-                            op: BinaryOp::Add,
-                            ..
-                        }
-                    ));
+            assert!(matches!(*right, Expression::Identifier(ref n, _) if n == "c"));
+            assert!(matches!(
+                *left,
+                Expression::Binary {
+                    operator: BinaryOperator::Add,
+                    ..
                 }
-                other => panic!("expected a grouping on the left, got {other:?}"),
-            }
+            ));
         }
         other => panic!("expected top-level Mul, got {other:?}"),
+    }
+}
+
+#[test]
+fn parenthesized_and_unparenthesized_additions_produce_the_same_shape() {
+    // The concrete illustration of "parse tree vs AST": once precedence
+    // is resolved, parentheses leave no trace beyond their own span —
+    // spans necessarily differ here (the source text differs by one
+    // character), so this compares shape, not full equality.
+    for source in ["(a + b)", "a + b"] {
+        match single_expr_statement(source) {
+            Expression::Binary {
+                operator: BinaryOperator::Add,
+                left,
+                right,
+                ..
+            } => {
+                assert!(matches!(*left, Expression::Identifier(ref n, _) if n == "a"));
+                assert!(matches!(*right, Expression::Identifier(ref n, _) if n == "b"));
+            }
+            other => panic!("expected Binary(Add) for {source:?}, got {other:?}"),
+        }
     }
 }
 
@@ -197,15 +245,15 @@ fn parentheses_override_precedence() {
 fn unary_minus_and_not() {
     assert!(matches!(
         single_expr_statement("-a"),
-        Expr::Unary {
-            op: parser::syntax::UnaryOp::Neg,
+        Expression::Unary {
+            operator: UnaryOperator::Neg,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("!a"),
-        Expr::Unary {
-            op: parser::syntax::UnaryOp::Not,
+        Expression::Unary {
+            operator: UnaryOperator::Not,
             ..
         }
     ));
@@ -215,43 +263,43 @@ fn unary_minus_and_not() {
 fn comparisons() {
     assert!(matches!(
         single_expr_statement("x == y"),
-        Expr::Binary {
-            op: BinaryOp::Eq,
+        Expression::Binary {
+            operator: BinaryOperator::Eq,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("x != y"),
-        Expr::Binary {
-            op: BinaryOp::NotEq,
+        Expression::Binary {
+            operator: BinaryOperator::NotEq,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("x < y"),
-        Expr::Binary {
-            op: BinaryOp::Lt,
+        Expression::Binary {
+            operator: BinaryOperator::Lt,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("x <= y"),
-        Expr::Binary {
-            op: BinaryOp::Le,
+        Expression::Binary {
+            operator: BinaryOperator::Le,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("x > y"),
-        Expr::Binary {
-            op: BinaryOp::Gt,
+        Expression::Binary {
+            operator: BinaryOperator::Gt,
             ..
         }
     ));
     assert!(matches!(
         single_expr_statement("x >= y"),
-        Expr::Binary {
-            op: BinaryOp::Ge,
+        Expression::Binary {
+            operator: BinaryOperator::Ge,
             ..
         }
     ));
@@ -259,10 +307,31 @@ fn comparisons() {
 
 #[test]
 fn boolean_literals() {
-    assert!(matches!(single_expr_statement("true"), Expr::Bool(true, _)));
+    assert!(matches!(
+        single_expr_statement("true"),
+        Expression::Boolean(true, _)
+    ));
     assert!(matches!(
         single_expr_statement("false"),
-        Expr::Bool(false, _)
+        Expression::Boolean(false, _)
+    ));
+}
+
+#[test]
+fn integer_literals_are_parsed_to_values() {
+    assert!(matches!(
+        single_expr_statement("12345"),
+        Expression::Integer(12345, _)
+    ));
+}
+
+#[test]
+fn integer_literal_out_of_range_is_an_error() {
+    let errors = parse_errors("fn main() {\n    99999999999999999999;\n}\n");
+    assert_eq!(errors.len(), 1);
+    assert!(matches!(
+        &errors[0].kind,
+        ParseErrorKind::InvalidIntegerLiteral { .. }
     ));
 }
 
@@ -270,9 +339,9 @@ fn boolean_literals() {
 fn assignment_is_right_associative_and_low_precedence() {
     // x = y = 1 must parse as x = (y = 1).
     match single_expr_statement("x = y = 1") {
-        Expr::Assign { name, value, .. } => {
+        Expression::Assign { name, value, .. } => {
             assert_eq!(name, "x");
-            assert!(matches!(*value, Expr::Assign { .. }));
+            assert!(matches!(*value, Expression::Assign { .. }));
         }
         other => panic!("expected Assign, got {other:?}"),
     }
@@ -293,14 +362,14 @@ fn invalid_assignment_target_is_an_error() {
 #[test]
 fn if_statement_without_else() {
     let f = single_function("fn main() {\n    if x > 10 {\n        return x;\n    }\n}\n");
-    match &f.body.statements[0] {
-        Stmt::If {
+    match &f.body[0] {
+        Statement::If {
             else_branch,
-            then_block,
+            then_branch,
             ..
         } => {
             assert!(else_branch.is_none());
-            assert_eq!(then_block.statements.len(), 1);
+            assert_eq!(then_branch.len(), 1);
         }
         other => panic!("expected If, got {other:?}"),
     }
@@ -311,26 +380,35 @@ fn if_else_chain() {
     let f = single_function(
         "fn main() {\n    if x > 10 {\n        return 1;\n    } else if x > 0 {\n        return 2;\n    } else {\n        return 3;\n    }\n}\n",
     );
-    match &f.body.statements[0] {
-        Stmt::If {
-            else_branch: Some(ElseBranch::If(nested)),
+    match &f.body[0] {
+        Statement::If {
+            else_branch: Some(outer_else),
             ..
-        } => match nested.as_ref() {
-            Stmt::If {
-                else_branch: Some(ElseBranch::Block(_)),
-                ..
-            } => {}
-            other => panic!("expected nested If with a Block else, got {other:?}"),
-        },
-        other => panic!("expected If with an If else-branch, got {other:?}"),
+        } => {
+            assert_eq!(
+                outer_else.len(),
+                1,
+                "else-if desugars to a single-statement block"
+            );
+            match &outer_else[0] {
+                Statement::If {
+                    else_branch: Some(inner_else),
+                    ..
+                } => {
+                    assert!(matches!(inner_else[0], Statement::Return { .. }));
+                }
+                other => panic!("expected the nested else-if as an If, got {other:?}"),
+            }
+        }
+        other => panic!("expected If with an else branch, got {other:?}"),
     }
 }
 
 #[test]
 fn while_statement() {
     let f = single_function("fn main() {\n    while x > 0 {\n        x = x - 1;\n    }\n}\n");
-    match &f.body.statements[0] {
-        Stmt::While { body, .. } => assert_eq!(body.statements.len(), 1),
+    match &f.body[0] {
+        Statement::While { body, .. } => assert_eq!(body.len(), 1),
         other => panic!("expected While, got {other:?}"),
     }
 }
@@ -459,6 +537,7 @@ fn lexer_and_parser_diagnostics_share_the_same_rendering_shape() {
 fn a_broken_function_does_not_prevent_the_next_one_from_parsing() {
     let (program, errors) = parse_ok("fn broken(\nfn ok() {}\n");
     assert_eq!(errors.len(), 1);
-    assert_eq!(program.functions.len(), 1);
-    assert_eq!(program.functions[0].name, "ok");
+    let fns = functions(&program);
+    assert_eq!(fns.len(), 1);
+    assert_eq!(fns[0].name, "ok");
 }

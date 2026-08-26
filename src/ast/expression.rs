@@ -16,11 +16,24 @@ pub enum Expression {
     String(String, Span),
     Boolean(bool, Span),
     Identifier(String, Span),
-    Binary { left: Box<Expression>, operator: BinaryOperator, right: Box<Expression>, span: Span },
-    Unary { operator: UnaryOperator, operand: Box<Expression>, span: Span },
+    Binary {
+        left: Box<Expression>,
+        operator: BinaryOperator,
+        right: Box<Expression>,
+        span: Span,
+    },
+    Unary {
+        operator: UnaryOperator,
+        operand: Box<Expression>,
+        span: Span,
+    },
     /// An assignment to a plain identifier. Dijk Core's grammar currently
     /// allows no other assignment target.
-    Assign { name: String, value: Box<Expression>, span: Span },
+    Assign {
+        name: String,
+        value: Box<Expression>,
+        span: Span,
+    },
 }
 
 impl Expression {

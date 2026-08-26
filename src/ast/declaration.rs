@@ -17,14 +17,6 @@ pub enum Declaration {
     Function(Function),
 }
 
-impl Declaration {
-    pub fn span(&self) -> Span {
-        match self {
-            Declaration::Function(f) => f.span,
-        }
-    }
-}
-
 /// A function declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {

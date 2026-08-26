@@ -4,6 +4,7 @@
 //! binary is the entry point for observing each compiler stage as it is
 //! built.
 
+mod ast;
 mod diagnostics;
 mod lexer;
 mod parser;
