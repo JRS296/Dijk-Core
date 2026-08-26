@@ -1,8 +1,11 @@
 //! Tests for lexical analysis. See `docs/lexer.md` for the specification
 //! these tests verify against.
 
-// The lexer module is not part of the library's public surface (dijk is a
-// binary crate), so these tests include it directly by path.
+// Neither module is part of a library's public surface (dijk is a binary
+// crate), so these tests include them directly by path, mirroring their
+// layout as siblings under the crate root in src/main.rs.
+#[path = "../src/diagnostics.rs"]
+mod diagnostics;
 #[path = "../src/lexer/mod.rs"]
 mod lexer;
 
@@ -174,6 +177,14 @@ fn diagnostic_rendering_points_at_the_offending_character() {
     assert!(rendered.contains("unexpected character '@'"));
     assert!(rendered.contains("example.dk:1:12"));
     assert!(rendered.contains("let x = 42 @ 10;"));
+}
+
+#[test]
+fn token_descriptions_are_human_readable() {
+    assert_eq!(TokenKind::RightParen.describe(), "')'");
+    assert_eq!(TokenKind::Identifier.describe(), "identifier");
+    assert_eq!(TokenKind::Fn.describe(), "'fn'");
+    assert_eq!(TokenKind::Eof.describe(), "end of file");
 }
 
 #[test]

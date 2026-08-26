@@ -142,6 +142,56 @@ impl TokenKind {
             TokenKind::Identifier | TokenKind::Integer | TokenKind::String
         )
     }
+
+    /// A human-readable description for parser diagnostics, e.g. "expected
+    /// ')', found '{'" rather than "expected RPAREN, found LBRACE".
+    pub fn describe(&self) -> &'static str {
+        use TokenKind::*;
+        match self {
+            Identifier => "identifier",
+            Integer => "integer literal",
+            String => "string literal",
+            Fn => "'fn'",
+            Let => "'let'",
+            Mut => "'mut'",
+            If => "'if'",
+            Else => "'else'",
+            While => "'while'",
+            For => "'for'",
+            Return => "'return'",
+            Struct => "'struct'",
+            Enum => "'enum'",
+            True => "'true'",
+            False => "'false'",
+            Plus => "'+'",
+            Minus => "'-'",
+            Star => "'*'",
+            Slash => "'/'",
+            Percent => "'%'",
+            Equal => "'='",
+            EqualEqual => "'=='",
+            Bang => "'!'",
+            BangEqual => "'!='",
+            Less => "'<'",
+            LessEqual => "'<='",
+            Greater => "'>'",
+            GreaterEqual => "'>='",
+            Amp => "'&'",
+            Pipe => "'|'",
+            LeftParen => "'('",
+            RightParen => "')'",
+            LeftBrace => "'{'",
+            RightBrace => "'}'",
+            LeftBracket => "'['",
+            RightBracket => "']'",
+            Comma => "','",
+            Colon => "':'",
+            Semicolon => "';'",
+            Dot => "'.'",
+            Arrow => "'->'",
+            Eof => "end of file",
+        }
+    }
 }
 
 impl fmt::Display for TokenKind {
