@@ -414,6 +414,63 @@ fn while_statement() {
     }
 }
 
+// --- spans ---
+
+#[test]
+fn function_span_covers_the_whole_declaration() {
+    let source = "fn add(a: i32, b: i32) -> i32 { return a + b; }";
+    let f = single_function(source);
+    assert_eq!(&source[f.span.start..f.span.end], source);
+}
+
+#[test]
+fn parameter_and_type_spans_point_at_their_own_text() {
+    let source = "fn add(a: i32, b: i32) -> i32 {}";
+    let f = single_function(source);
+    assert_eq!(
+        &source[f.params[0].span.start..f.params[0].span.end],
+        "a: i32"
+    );
+    assert_eq!(
+        &source[f.params[0].ty.span.start..f.params[0].ty.span.end],
+        "i32"
+    );
+    assert_eq!(
+        &source[f.params[1].span.start..f.params[1].span.end],
+        "b: i32"
+    );
+}
+
+#[test]
+fn expression_span_points_at_its_own_text_not_the_whole_statement() {
+    let source = "fn main() {\n    return a + b;\n}\n";
+    let f = single_function(source);
+    match &f.body[0] {
+        Statement::Return {
+            value: Some(expr), ..
+        } => {
+            assert_eq!(&source[expr.span().start..expr.span().end], "a + b");
+        }
+        other => panic!("expected Return, got {other:?}"),
+    }
+}
+
+#[test]
+fn nested_binary_expression_spans_grow_outward() {
+    // In `a + b * c`, the inner `b * c` span must be a strict subrange
+    // of the outer `+` expression's span, not equal to it.
+    match single_expr_statement("a + b * c") {
+        Expression::Binary {
+            right, span: outer, ..
+        } => {
+            let inner = right.span();
+            assert!(inner.start > outer.start);
+            assert_eq!(inner.end, outer.end);
+        }
+        other => panic!("expected top-level Binary, got {other:?}"),
+    }
+}
+
 // --- errors ---
 
 fn parse_errors(source: &str) -> Vec<ParseError> {
