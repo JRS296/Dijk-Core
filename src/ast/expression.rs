@@ -1,3 +1,4 @@
+use crate::lexer::token::Span;
 use std::fmt;
 
 /// An expression: something evaluated for a value.
@@ -11,15 +12,29 @@ use std::fmt;
 /// (see `docs/ast.md`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Integer(i64),
-    String(String),
-    Boolean(bool),
-    Identifier(String),
-    Binary { left: Box<Expression>, operator: BinaryOperator, right: Box<Expression> },
-    Unary { operator: UnaryOperator, operand: Box<Expression> },
+    Integer(i64, Span),
+    String(String, Span),
+    Boolean(bool, Span),
+    Identifier(String, Span),
+    Binary { left: Box<Expression>, operator: BinaryOperator, right: Box<Expression>, span: Span },
+    Unary { operator: UnaryOperator, operand: Box<Expression>, span: Span },
     /// An assignment to a plain identifier. Dijk Core's grammar currently
     /// allows no other assignment target.
-    Assign { name: String, value: Box<Expression> },
+    Assign { name: String, value: Box<Expression>, span: Span },
+}
+
+impl Expression {
+    pub fn span(&self) -> Span {
+        match self {
+            Expression::Integer(_, span)
+            | Expression::String(_, span)
+            | Expression::Boolean(_, span)
+            | Expression::Identifier(_, span)
+            | Expression::Binary { span, .. }
+            | Expression::Unary { span, .. }
+            | Expression::Assign { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

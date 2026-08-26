@@ -1,3 +1,7 @@
+use super::statement::Statement;
+use super::types::Type;
+use crate::lexer::token::Span;
+
 /// The root of a parsed Dijk program: every top-level declaration in the
 /// order it appeared in the source.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,8 +17,13 @@ pub enum Declaration {
     Function(Function),
 }
 
-use super::statement::Statement;
-use super::types::Type;
+impl Declaration {
+    pub fn span(&self) -> Span {
+        match self {
+            Declaration::Function(f) => f.span,
+        }
+    }
+}
 
 /// A function declaration.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +32,7 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Statement>,
+    pub span: Span,
 }
 
 /// A single function parameter, e.g. `a: i32`.
@@ -30,4 +40,5 @@ pub struct Function {
 pub struct Param {
     pub name: String,
     pub ty: Type,
+    pub span: Span,
 }
