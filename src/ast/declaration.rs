@@ -13,12 +13,21 @@ pub enum Declaration {
     Function(Function),
 }
 
+use super::statement::Statement;
+use super::types::Type;
+
 /// A function declaration.
-///
-/// This is intentionally minimal for now — parameters, a return type, and
-/// a body are added in the next step of this milestone (see
-/// `docs/roadmap.md`'s commit progression for `dijk-0.0.3`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
+    pub body: Vec<Statement>,
+}
+
+/// A single function parameter, e.g. `a: i32`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: Type,
 }
