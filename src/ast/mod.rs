@@ -7,5 +7,6 @@
 //! rewritten to construct these nodes directly.
 
 pub mod declaration;
+pub mod expression;
 pub mod statement;
 pub mod types;
