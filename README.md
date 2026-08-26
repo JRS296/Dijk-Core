@@ -26,7 +26,7 @@ implementation teaches how a language and its compiler are actually built.
 ✓ Project foundations (charter, philosophy, architecture, roadmap)
 ✓ Lexical analysis (dijk lex, .dk and .dijk source files)
 ✓ Parsing (dijk parse)
-□ AST
+✓ AST (dijk ast — not yet tagged as a release)
 □ Semantic analysis
 □ Type checking
 □ Interpretation
@@ -34,11 +34,12 @@ implementation teaches how a language and its compiler are actually built.
 □ Native compilation
 ```
 
-`0.0.2` is intentionally incomplete — there is no formal AST or compiler
-yet, and the parser's output is a deliberately provisional syntax
-representation (see [docs/parser.md](docs/parser.md)). See
-[docs/](docs/) for the philosophy, design constraints, architecture, and
-roadmap that govern implementation.
+The last tagged release, `0.0.2`, has a parser but no formal AST — its
+parser built a deliberately provisional "syntax representation" instead
+(see [docs/parser.md](docs/parser.md)). The AST is implemented on top of
+that in this checkout; see [CHANGELOG.md](CHANGELOG.md#unreleased) and
+[docs/ast.md](docs/ast.md). See [docs/](docs/) for the philosophy, design
+constraints, architecture, and roadmap that govern implementation.
 
 ## Project trajectory
 
@@ -76,6 +77,7 @@ Self-hosting
 - [docs/roadmap.md](docs/roadmap.md) — provisional implementation phases
 - [docs/lexer.md](docs/lexer.md) — lexical grammar implemented by `dijk lex`
 - [docs/parser.md](docs/parser.md) — grammar and parsing strategy implemented by `dijk parse`
+- [docs/ast.md](docs/ast.md) — the AST shape, parse-tree-vs-AST, invariants, and traversal
 - [docs/testing.md](docs/testing.md) — automated tests and manual CLI testing
 - [CHANGELOG.md](CHANGELOG.md) — what shipped in each release
 
@@ -90,6 +92,7 @@ cargo run -- --help
 cargo run -- doctor
 cargo run -- lex examples/hello.dk
 cargo run -- parse examples/hello.dk
+cargo run -- ast examples/hello.dk
 cargo test
 ```
 
@@ -152,6 +155,12 @@ Program
         │           └── Integer(10)
         └── Return
             └── Identifier(y)
+```
+
+`dijk ast` prints the same tree plus a node-count summary:
+
+```text
+1 function(s), 3 statement(s), 5 expression(s)
 ```
 
 There is no `dijk compile` yet.

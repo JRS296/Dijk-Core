@@ -26,14 +26,16 @@ Phase 16 — Self-hosting
 
 ## Current phase
 
-**Phase 2 — Parser.** Phase 0 (language design) produced the charter in
+**Phase 3 — AST.** Phase 0 (language design) produced the charter in
 [philosophy.md](philosophy.md), [language.md](language.md), and
 [architecture.md](architecture.md). Phase 1 implemented lexical analysis
 per [lexer.md](lexer.md): `dijk lex <file>` turns source text into a
-token stream. Phase 2 implements parsing per [parser.md](parser.md):
-`dijk parse <file>` turns that token stream into a syntax representation.
-That representation is deliberately not yet Dijk's formal AST — see
-[parser.md](parser.md) for why — which Phase 3 will formalize.
+token stream. Phase 2 implemented parsing per [parser.md](parser.md).
+Phase 3 formalizes the parser's output into Dijk's actual AST per
+[ast.md](ast.md): the parser now constructs AST nodes directly, `dijk
+parse`/`dijk ast <file>` expose it, and a `Visitor`-based traversal
+(`src/ast/visit.rs`) exists for later passes to build on. There is no
+semantic analysis, type checking, or execution yet.
 
 ## Correspondence with `dijkstra-book`
 

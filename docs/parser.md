@@ -11,35 +11,35 @@ The parser answers one question:
 
 The lexer already answered "what are the pieces" (`docs/lexer.md`). The
 parser determines whether a token sequence conforms to Dijk's grammar and
-builds a structural representation of it. It does not yet decide what that
-structure *means* — that is semantic analysis's job, still to come.
-
-## A deliberate boundary: syntax, not yet "the AST"
-
-The parser's output (`src/parser/syntax.rs`) is typed and structured, but
-it is deliberately not called Dijk's formal AST. It has no arena, no node
-IDs, no visitor infrastructure, and no semantic information — a `Type` is
-just a name; nothing has checked it refers to anything real. Formalizing
-this into Dijk's actual AST architecture is a separate, later milestone.
-
-The reason for drawing this line here rather than merging it into one
-"parser + AST" milestone: parsing and representing a program are related
-but distinct problems. A student should be able to answer "did this parse
-correctly?" before being asked to design a representation meant to support
-everything semantic analysis, IR generation, and beyond will eventually
-need from it.
+constructs Dijk's AST (`docs/ast.md`) directly from it. It does not decide
+what that structure *means* — that is semantic analysis's job, still to
+come.
 
 ```text
 Tokens
   ↓
 Parser
   ↓
-Syntax representation      (this milestone)
-  ↓
-Formal Dijk AST            (a later milestone)
+AST            (docs/ast.md)
   ↓
 Semantic analysis
 ```
+
+### A retired intermediate step
+
+The very first version of this parser (`dijk-0.0.2`) built a separate,
+deliberately provisional "syntax representation" (`src/parser/syntax.rs`)
+rather than the real AST — the reasoning at the time was that parsing and
+representing a program are related but distinct problems, and a student
+should be able to answer "did this parse correctly?" before being asked to
+design a representation meant to support everything semantic analysis,
+IR generation, and beyond would eventually need. `dijk-0.0.3` formalized
+that provisional representation into the real AST and the parser was
+rewritten to build it directly; `syntax.rs` no longer exists. This history
+is worth knowing mainly because it's a reasonable example of deliberately
+building something provisional first — see `docs/ast.md` for what changed
+in the formalization (most notably: parenthesized grouping, kept as its
+own node in the provisional version, is gone entirely in the real AST).
 
 ## Grammar
 
@@ -129,9 +129,8 @@ Lowest
 `a + b * c` parses as `a + (b * c)`, not `(a + b) * c`, because
 multiplication is parsed at a tighter precedence level than addition.
 Parenthesized expressions (`"(" expression ")"`) let a program override
-this and are preserved as their own node in the syntax representation
-rather than discarded once precedence is resolved, so the tree still
-reflects what was actually written.
+this — but produce no node of their own in the AST once precedence is
+resolved; see `docs/ast.md`'s "parse tree vs. AST" section for why.
 
 Assignment is right-associative (`x = y = 1` parses as `x = (y = 1)`) and
 its left-hand side must currently be a plain identifier — anything else

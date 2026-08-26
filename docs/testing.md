@@ -11,14 +11,17 @@ examples, and how to construct your own cases.
 cargo test
 ```
 
-This runs three suites:
+This runs four suites:
 
 - `tests/lexer_tests.rs` — every category in the lexical specification
   (`docs/lexer.md`): identifiers, integers, strings, keywords, operators,
   punctuation, whitespace, comments, lexical errors, and source spans.
 - `tests/parser_tests.rs` — every category in the grammar (`docs/parser.md`):
   functions, variables, expression precedence, comparisons, control flow,
-  assignment, parse errors, and multi-error recovery.
+  assignment, parse errors, multi-error recovery, and AST source spans.
+- `tests/ast_tests.rs` — the AST (`docs/ast.md`) independent of parsing:
+  constructing nodes directly, operator `Display`, `span()` accessors,
+  and traversal (`Visitor`) over hand-built trees.
 - `tests/cli_tests.rs` — end-to-end checks against the built `dijk`
   binary itself (not just the underlying modules), including that `dijk
   lex`/`dijk parse` treat `.dk` and `.dijk` identically.
@@ -50,6 +53,7 @@ From `dijk-core/`:
 ./target/release/dijk lex examples/unterminated_string.dk
 ./target/release/dijk parse examples/hello.dk
 ./target/release/dijk parse examples/parse_error.dk
+./target/release/dijk ast examples/hello.dk
 ```
 
 ```powershell
@@ -60,6 +64,7 @@ From `dijk-core/`:
 .\target\release\dijk.exe lex examples\unterminated_string.dk
 .\target\release\dijk.exe parse examples\hello.dk
 .\target\release\dijk.exe parse examples\parse_error.dk
+.\target\release\dijk.exe ast examples\hello.dk
 ```
 
 `hello.dk` and `hello.dijk` have identical contents — both `dijk lex` and
@@ -78,9 +83,9 @@ problem, then a source-anchored error, and exit non-zero. `parse_error.dk`
 should print whatever of the syntax tree parsed successfully, then a
 source-anchored parse error, and exit non-zero.
 
-`cargo run -- lex <file>` and `cargo run -- parse <file>` work the same
-way and skip the explicit build step, at the cost of a slower first run
-per change.
+`cargo run -- lex <file>`, `cargo run -- parse <file>`, and `cargo run --
+ast <file>` all work the same way and skip the explicit build step, at
+the cost of a slower first run per change.
 
 ### 3. Try your own cases
 

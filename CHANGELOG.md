@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased]
+
+Not yet tagged as a release. In progress toward `dijk-0.0.3` — the AST.
+
+### Added
+
+- Dijk's AST (`src/ast/`): `Program`, `Declaration`/`Function`/`Param`,
+  `Type`, `Statement`, `Expression`, `BinaryOperator`, `UnaryOperator`
+- The parser (`src/parser/parse.rs`) now constructs AST nodes directly;
+  the provisional `src/parser/syntax.rs` from `0.0.2` is retired
+- `else if` desugars into a single-statement `else_branch`, rather than a
+  distinct AST case
+- No `Grouping` node — parenthesized expressions produce no node of their
+  own, once precedence is resolved (see `docs/ast.md`)
+- Integer literals are parsed to `i64` at AST-construction time, with a
+  new `ParseErrorKind::InvalidIntegerLiteral` for values that overflow
+- Source spans on every AST node (reusing the lexer's `Span`, not a new
+  type), with `Statement::span()` / `Expression::span()` accessors
+- A minimal `Visitor` trait and `walk_*` functions for AST traversal
+  (`src/ast/visit.rs`), with `dijk ast`'s node-count summary as its first
+  real consumer
+- `dijk ast` command, printing the AST plus function/statement/expression
+  counts
+
+### Documentation
+
+- `docs/ast.md`: the AST shape, parse-tree-vs-AST, deviations from a
+  "typical" example AST, invariants, and traversal
+- `docs/parser.md` updated to describe the parser building the AST
+  directly, with the retired provisional-syntax step noted as history
+
 ## [0.0.2] - 2026-08-27
 
 Experimental / educational development release. Grammar, ABI, standard
