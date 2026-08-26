@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+Not yet tagged as a release. In progress toward `dijk-0.0.2` — parsing.
+
+### Added
+
+- Hand-written recursive-descent parser
+- Provisional syntax representation (`src/parser/syntax.rs`) — deliberately
+  not yet Dijk's formal AST; see `docs/parser.md`
+- Function, `let`, `return`, `if`/`else`, `while`, and expression-statement
+  parsing
+- Expression parsing with operator precedence (unary, `*`/`/`, `+`/`-`,
+  comparisons, equality, assignment) and parenthesized grouping
+- Assignment expressions (identifier targets only)
+- Parser error reporting with source-anchored diagnostics, sharing the
+  lexer's rendering (`src/diagnostics.rs`)
+- Basic error recovery: synchronization at statement (`;`/`}`) and
+  declaration (`fn`) boundaries, so a single pass can report more than
+  one problem
+- `dijk parse` command, printing the syntax tree
+- `TokenKind::describe()` for human-readable parser diagnostics
+
+### Documentation
+
+- Dijk grammar specification (`docs/parser.md`)
+- The syntax-vs-AST boundary and why it's drawn where it is
+
 ## [0.0.1] - 2026-08-25
 
 Experimental / educational development release. Grammar, ABI, standard

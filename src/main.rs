@@ -1,9 +1,13 @@
 //! Dijk Core CLI.
 //!
-//! There is no parser or compiler yet — only lexical analysis. This binary
-//! is the entry point for observing each compiler stage as it is built.
+//! There is no compiler yet — only lexical analysis and parsing. This
+//! binary is the entry point for observing each compiler stage as it is
+//! built.
 
+mod diagnostics;
 mod lexer;
+mod parser;
+mod pretty;
 
 const VERSION: &str = "0.0.1";
 
@@ -21,6 +25,7 @@ COMMANDS:
     --help       Print this message
     doctor       Report the current state of the toolchain
     lex <file>   Print the token stream for a Dijk source file (.dk or .dijk)
+    parse <file> Print the syntax tree for a Dijk source file (.dk or .dijk)
 ";
 
 fn main() {
@@ -38,6 +43,14 @@ fn main() {
             };
             lex(&path);
         }
+        Some("parse") => {
+            let Some(path) = args.next() else {
+                eprintln!("dijk: 'parse' requires a file argument");
+                eprintln!("usage: dijk parse <file>");
+                std::process::exit(1);
+            };
+            parse(&path);
+        }
         Some(other) => {
             eprintln!("dijk: unrecognized argument '{other}'");
             eprintln!("run 'dijk --help' for usage");
@@ -49,7 +62,7 @@ fn main() {
 fn doctor() {
     println!("Dijk toolchain");
     println!("Version: {VERSION}");
-    println!("Status: Bootstrap development (lexer implemented)");
+    println!("Status: Bootstrap development (lexer and parser implemented)");
     println!("Compiler: Not yet implemented");
 }
 
@@ -65,20 +78,23 @@ fn is_dijk_source_file(path: &str) -> bool {
         .is_some_and(|ext| SOURCE_EXTENSIONS.contains(&ext))
 }
 
-fn lex(path: &str) {
+fn read_source_file(path: &str) -> String {
     if !is_dijk_source_file(path) {
         eprintln!("dijk: '{path}' is not a Dijk source file (expected .dk or .dijk)");
         std::process::exit(1);
     }
 
-    let source = match std::fs::read_to_string(path) {
+    match std::fs::read_to_string(path) {
         Ok(source) => source,
         Err(err) => {
             eprintln!("dijk: could not read '{path}': {err}");
             std::process::exit(1);
         }
-    };
+    }
+}
 
+fn lex(path: &str) {
+    let source = read_source_file(path);
     let (tokens, errors) = lexer::tokenize(&source);
 
     for token in &tokens {
@@ -88,6 +104,29 @@ fn lex(path: &str) {
     if !errors.is_empty() {
         eprintln!();
         for error in &errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+}
+
+fn parse(path: &str) {
+    let source = read_source_file(path);
+    let (tokens, lex_errors) = lexer::tokenize(&source);
+
+    if !lex_errors.is_empty() {
+        for error in &lex_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+
+    let (program, parse_errors) = parser::parse(tokens);
+    print!("{}", pretty::print_program(&program));
+
+    if !parse_errors.is_empty() {
+        eprintln!();
+        for error in &parse_errors {
             eprint!("{}", error.render(path, &source));
         }
         std::process::exit(1);

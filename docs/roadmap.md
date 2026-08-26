@@ -26,11 +26,14 @@ Phase 16 — Self-hosting
 
 ## Current phase
 
-**Phase 1 — Lexer.** Phase 0 (language design) produced the charter in
+**Phase 2 — Parser.** Phase 0 (language design) produced the charter in
 [philosophy.md](philosophy.md), [language.md](language.md), and
-[architecture.md](architecture.md). Phase 1 has implemented lexical
-analysis per [lexer.md](lexer.md): `dijk lex <file>` turns source text
-into a token stream. There is no parser yet.
+[architecture.md](architecture.md). Phase 1 implemented lexical analysis
+per [lexer.md](lexer.md): `dijk lex <file>` turns source text into a
+token stream. Phase 2 implements parsing per [parser.md](parser.md):
+`dijk parse <file>` turns that token stream into a syntax representation.
+That representation is deliberately not yet Dijk's formal AST — see
+[parser.md](parser.md) for why — which Phase 3 will formalize.
 
 ## Correspondence with `dijkstra-book`
 

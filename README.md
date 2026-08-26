@@ -25,7 +25,7 @@ implementation teaches how a language and its compiler are actually built.
 ```text
 ✓ Project foundations (charter, philosophy, architecture, roadmap)
 ✓ Lexical analysis (dijk lex, .dk and .dijk source files)
-□ Parsing
+✓ Parsing (dijk parse — not yet tagged as a release)
 □ AST
 □ Semantic analysis
 □ Type checking
@@ -34,9 +34,11 @@ implementation teaches how a language and its compiler are actually built.
 □ Native compilation
 ```
 
-`0.0.1` is intentionally incomplete — there is no parser or compiler yet.
-See [docs/](docs/) for the philosophy, design constraints, architecture,
-and roadmap that govern implementation.
+The last tagged release, `0.0.1`, is intentionally incomplete — there is
+no parser or compiler in it. Parsing is implemented on top of that in this
+checkout; see [CHANGELOG.md](CHANGELOG.md#unreleased). See [docs/](docs/)
+for the philosophy, design constraints, architecture, and roadmap that
+govern implementation.
 
 ## Project trajectory
 
@@ -73,6 +75,7 @@ Self-hosting
 - [docs/architecture.md](docs/architecture.md) — intended compiler architecture
 - [docs/roadmap.md](docs/roadmap.md) — provisional implementation phases
 - [docs/lexer.md](docs/lexer.md) — lexical grammar implemented by `dijk lex`
+- [docs/parser.md](docs/parser.md) — grammar and parsing strategy implemented by `dijk parse`
 - [docs/testing.md](docs/testing.md) — automated tests and manual CLI testing
 - [CHANGELOG.md](CHANGELOG.md) — what shipped in each release
 
@@ -86,6 +89,7 @@ cargo run -- --version
 cargo run -- --help
 cargo run -- doctor
 cargo run -- lex examples/hello.dk
+cargo run -- parse examples/hello.dk
 cargo test
 ```
 
@@ -124,7 +128,33 @@ RBRACE
 EOF
 ```
 
-There is no `dijk parse` or `dijk compile` yet.
+```text
+dijk parse examples/hello.dk
+```
+
+```text
+Program
+└── Function
+    ├── Name: main
+    ├── Parameters: []
+    └── Body
+        ├── Let
+        │   ├── Name: x
+        │   ├── Type: i32
+        │   └── Value
+        │       └── Integer(42)
+        ├── Let
+        │   ├── Name: y
+        │   ├── Type: i32
+        │   └── Value
+        │       └── Binary(+)
+        │           ├── Identifier(x)
+        │           └── Integer(10)
+        └── Return
+            └── Identifier(y)
+```
+
+There is no `dijk compile` yet.
 
 ## Contributing
 
