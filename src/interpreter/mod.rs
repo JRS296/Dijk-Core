@@ -22,4 +22,5 @@
 
 pub mod environment;
 pub mod error;
+mod eval;
 pub mod value;

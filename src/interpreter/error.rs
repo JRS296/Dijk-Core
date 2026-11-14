@@ -12,12 +12,34 @@ use crate::lexer::token::Span;
 use std::fmt;
 
 /// One variant per way execution can fail.
-///
-/// There are none yet. Nothing is evaluated so far, so nothing can fail.
-/// An enum with no variants has no values, and each part of the
-/// interpreter adds the failures it can produce.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeErrorKind {}
+pub enum RuntimeErrorKind {
+    /// An integer was divided by zero.
+    DivisionByZero,
+    /// The true result of an integer operation does not fit in 64 bits.
+    IntegerOverflow { operator: String },
+    /// A binary operator was applied to kinds of value it is not defined
+    /// for, such as `1 + true` or `"a" - "b"`.
+    InvalidBinaryOperation {
+        operator: String,
+        left: &'static str,
+        right: &'static str,
+    },
+    /// A unary operator was applied to a kind of value it is not defined
+    /// for, such as `-true` or `!1`.
+    InvalidUnaryOperation {
+        operator: String,
+        operand: &'static str,
+    },
+    /// A variable that does not exist was read or assigned. Semantic
+    /// analysis rejects such programs before they run; the interpreter
+    /// still reports it rather than crash, should it ever be given an
+    /// unchecked program.
+    UndefinedVariable { name: String },
+    /// A call to a function that does not exist. As with
+    /// `UndefinedVariable`, semantic analysis rejects this first.
+    UndefinedFunction { name: String },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError {
@@ -31,7 +53,22 @@ impl RuntimeError {
     }
 
     fn message(&self) -> String {
-        match self.kind {}
+        match &self.kind {
+            RuntimeErrorKind::DivisionByZero => "division by zero".to_string(),
+            RuntimeErrorKind::IntegerOverflow { operator } => {
+                format!("integer overflow: the result of `{operator}` does not fit in 64 bits")
+            }
+            RuntimeErrorKind::InvalidBinaryOperation {
+                operator,
+                left,
+                right,
+            } => format!("invalid operation: cannot apply `{operator}` to {left} and {right}"),
+            RuntimeErrorKind::InvalidUnaryOperation { operator, operand } => {
+                format!("invalid operation: cannot apply `{operator}` to {operand}")
+            }
+            RuntimeErrorKind::UndefinedVariable { name } => format!("undefined variable `{name}`"),
+            RuntimeErrorKind::UndefinedFunction { name } => format!("undefined function `{name}`"),
+        }
     }
 
     /// Render this error as a source-anchored diagnostic labelled
