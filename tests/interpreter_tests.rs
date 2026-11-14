@@ -703,3 +703,192 @@ fn unchecked_program_without_main_is_still_reported() {
         RuntimeErrorKind::MissingMain
     );
 }
+
+// --- recursion ---
+//
+// Each call runs in a frame of its own, so a function that calls itself
+// needs no special machinery: every level of the recursion simply gets
+// its own copy of every parameter and local.
+
+const FACTORIAL: &str =
+    "fn factorial(n: i32) -> i32 {\n    if n <= 1 {\n        return 1;\n    }\n\n    return n * factorial(n - 1);\n}\n";
+
+fn factorial_of(n: i64) -> Result<Value, RuntimeError> {
+    run(&format!(
+        "{FACTORIAL}\nfn main() {{\n    return factorial({n});\n}}\n"
+    ))
+}
+
+#[test]
+fn factorial_of_5_is_120() {
+    // Step 4 §16, verbatim.
+    assert_eq!(factorial_of(5), Ok(int(120)));
+}
+
+#[test]
+fn factorial_base_cases() {
+    assert_eq!(factorial_of(0), Ok(int(1)));
+    assert_eq!(factorial_of(1), Ok(int(1)));
+}
+
+#[test]
+fn factorial_of_20_is_the_largest_that_fits_in_64_bits() {
+    assert_eq!(factorial_of(20), Ok(int(2_432_902_008_176_640_000)));
+}
+
+#[test]
+fn factorial_of_21_overflows_instead_of_wrapping() {
+    let error = factorial_of(21).unwrap_err();
+    assert_eq!(
+        error.kind,
+        RuntimeErrorKind::IntegerOverflow {
+            operator: "*".to_string()
+        }
+    );
+    // The overflowing multiplication is `21 * factorial(20)`, in the
+    // outermost call to `factorial`.
+    assert_eq!(
+        error.call_stack,
+        vec!["factorial".to_string(), "main".to_string()]
+    );
+}
+
+const FIBONACCI: &str = "fn fib(n: i32) -> i32 {\n    if n < 2 {\n        return n;\n    }\n    return fib(n - 1) + fib(n - 2);\n}\n";
+
+#[test]
+fn fibonacci() {
+    for (n, expected) in [(0, 0), (1, 1), (2, 1), (10, 55)] {
+        assert_eq!(
+            value(&format!(
+                "{FIBONACCI}\nfn main() {{\n    return fib({n});\n}}\n"
+            )),
+            int(expected)
+        );
+    }
+}
+
+#[test]
+fn fibonacci_makes_many_calls_but_never_many_at_once() {
+    // fib(20) makes 21,891 calls in total, but at most 21 are in
+    // progress at any moment. The depth limit counts the latter.
+    assert_eq!(
+        value(&format!(
+            "{FIBONACCI}\nfn main() {{\n    return fib(20);\n}}\n"
+        )),
+        int(6765)
+    );
+}
+
+#[test]
+fn mutual_recursion() {
+    let program = "fn is_even(n: i32) -> bool {\n    if n == 0 {\n        return true;\n    }\n    return is_odd(n - 1);\n}\n\nfn is_odd(n: i32) -> bool {\n    if n == 0 {\n        return false;\n    }\n    return is_even(n - 1);\n}\n";
+    for (call, expected) in [
+        ("is_even(10)", true),
+        ("is_odd(7)", true),
+        ("is_even(101)", false),
+    ] {
+        assert_eq!(
+            value(&format!(
+                "{program}\nfn main() {{\n    return {call};\n}}\n"
+            )),
+            Value::Boolean(expected)
+        );
+    }
+}
+
+#[test]
+fn each_recursive_call_keeps_its_own_variables() {
+    // `n` is read again *after* the recursive call returns: if the
+    // calls shared one variable, every level would see the deepest `n`.
+    assert_eq!(
+        value("fn sum_to(n: i32) -> i32 {\n    if n == 0 {\n        return 0;\n    }\n    let rest = sum_to(n - 1);\n    return n + rest;\n}\n\nfn main() {\n    return sum_to(100);\n}\n"),
+        int(5050)
+    );
+}
+
+#[test]
+fn recursion_through_a_loop_and_a_branch() {
+    // Counts the nodes of a complete binary tree of the given height,
+    // recursing from inside a `while` nested in an `if`.
+    assert_eq!(
+        value("fn nodes(height: i32) -> i32 {\n    if height == 0 {\n        return 1;\n    } else {\n        let total = 1;\n        let child = 0;\n        while child < 2 {\n            total = total + nodes(height - 1);\n            child = child + 1;\n        }\n        return total;\n    }\n}\n\nfn main() {\n    return nodes(5);\n}\n"),
+        int(63)
+    );
+}
+
+// --- the call-depth limit ---
+//
+// At most 1000 calls may be in progress at once, `main` included (the
+// interpreter's `MAX_CALL_DEPTH`).
+
+const COUNTDOWN: &str = "fn down(n: i32) -> i32 {\n    if n == 0 {\n        return 0;\n    }\n    return down(n - 1);\n}\n";
+
+fn countdown_from(n: i64) -> Result<Value, RuntimeError> {
+    run(&format!(
+        "{COUNTDOWN}\nfn main() {{\n    return down({n});\n}}\n"
+    ))
+}
+
+#[test]
+fn recursion_up_to_the_depth_limit_succeeds() {
+    // main + down(998) … down(0) = 1000 calls in progress.
+    assert_eq!(countdown_from(998), Ok(int(0)));
+}
+
+#[test]
+fn recursion_past_the_depth_limit_is_a_runtime_error() {
+    // One more level would be the 1001st call in progress.
+    let error = countdown_from(999).unwrap_err();
+    assert_eq!(
+        error.kind,
+        RuntimeErrorKind::CallDepthExceeded { limit: 1000 }
+    );
+}
+
+#[test]
+fn infinite_recursion_hits_the_depth_limit_instead_of_crashing() {
+    let source = "fn forever(n: i32) -> i32 {\n    return forever(n + 1);\n}\n\nfn main() {\n    return forever(0);\n}\n";
+    let error = runtime_error(source);
+    assert_eq!(
+        error.kind,
+        RuntimeErrorKind::CallDepthExceeded { limit: 1000 }
+    );
+    // Reported at the call that would have gone one level too deep.
+    assert_eq!(error.span.start, source.find("forever(n + 1)").unwrap());
+    // Every frame in progress is recorded: 999 `forever`s, then `main`.
+    assert_eq!(error.call_stack.len(), 1000);
+    assert_eq!(
+        error.call_stack.first().map(String::as_str),
+        Some("forever")
+    );
+    assert_eq!(error.call_stack.last().map(String::as_str), Some("main"));
+}
+
+#[test]
+fn infinite_mutual_recursion_hits_the_depth_limit() {
+    let error = runtime_error("fn ping() -> i32 {\n    return pong();\n}\n\nfn pong() -> i32 {\n    return ping();\n}\n\nfn main() {\n    return ping();\n}\n");
+    assert_eq!(
+        error.kind,
+        RuntimeErrorKind::CallDepthExceeded { limit: 1000 }
+    );
+}
+
+#[test]
+fn a_deep_call_stack_is_abbreviated_when_rendered() {
+    let source = "fn forever() -> i32 {\n    return forever();\n}\n\nfn main() {\n    return forever();\n}\n";
+    let rendered = runtime_error(source).render("example.dk", source);
+    assert!(rendered
+        .starts_with("runtime error: stack overflow: more than 1000 nested function calls\n"));
+    assert!(rendered.ends_with(
+        "note: call stack: forever ← forever ← forever ← forever ← … 995 more … ← main\n"
+    ));
+}
+
+#[test]
+fn deep_recursion_within_the_limit_unwinds_correctly() {
+    // Deep, but within the limit, and with work on the way back up.
+    assert_eq!(
+        value("fn depth_sum(n: i32) -> i32 {\n    if n == 0 {\n        return 0;\n    }\n    return n + depth_sum(n - 1);\n}\n\nfn main() {\n    return depth_sum(900);\n}\n"),
+        int(405_450)
+    );
+}
