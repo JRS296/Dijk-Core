@@ -39,27 +39,32 @@ AST                "What was written?"
   ↓
 Semantic analysis  "Is this allowed to mean something?"
   ↓
+Type checking      "Are its operations valid for its values?"  (docs/types.md)
+  ↓
 Interpreter        "What does it do?"        (docs/interpreter.md)
 ```
 
 ## Deliberately small
 
-In `dijk-0.0.4` semantic analysis is **name resolution and nothing else**.
-It resolves variables, functions and scopes. It is **not** a type checker.
-This is accepted, because every name in it refers to something:
+Semantic analysis is **name resolution**, plus one rule about what names
+allow: only a binding declared `let mut` may be assigned to. It resolves
+variables, functions and scopes. It is **not** a type checker. This
+passes semantic analysis, because every name in it refers to something:
 
 ```dijk
-fn main() {
+fn main() -> i32 {
     let x: banana = "hi";
     let y: i32 = x + true;
     return y;
 }
 ```
 
-Type annotations are not checked, and neither are operand types. The
-interpreter discovers `x + true` when it runs the program, as a runtime
-error (`docs/interpreter.md`). Checking types before the program runs is
-a later milestone, with its own stage.
+Type annotations and operand types are the *next* stage's question. The
+type checker (`docs/types.md`) runs only after semantic analysis has
+accepted a program, and rejects this one (an unknown type `banana`),
+still before anything runs. Until `dijk-0.0.5` there was no such stage,
+and a mistake like `x + true` was only found by the interpreter, at run
+time.
 
 ## What it checks
 
@@ -74,19 +79,56 @@ a later milestone, with its own stage.
 | A name is declared at most once per scope | `let x = 1; let x = 2;` | `variable `x` is already declared in this scope` |
 | The program has a `main` | only `fn helper() {}` | `no `main` function: a Dijk program starts running at `fn main()`` |
 | `main` takes no parameters | `fn main(argc: i32)` | `` `main` must not take parameters `` |
+| Only a `let mut` may be assigned to | `let x = 1; x = 2;` | `cannot assign to immutable variable `x` (declare it with `let mut x` to allow assignment)` |
+| A parameter is never assigned to | `fn f(n: i32) { n = 0; }` | `cannot assign to parameter `n`: parameters are immutable` |
 
 `main` takes no parameters because nothing in a Dijk program calls it.
 `dijk run` does, with no arguments.
 
 ## What it does not check
 
-- **Types.** Annotations are arbitrary identifiers, and operands are not
-  checked (see above).
-- **Return values.** A function declared `-> i32` may `return;` or fall off
-  the end. It then returns `Unit`.
+- **Types.** Whether annotations name real types, whether operands,
+  arguments, assigned values and returned values have the right types,
+  and whether a function returns on every path are all the type
+  checker's rules (`docs/types.md`).
 - **Reachability.** Code after a `return` is legal. It simply never runs.
   There is no "unreachable code" warning.
 - **Unused variables, parameters or functions.**
+
+## Mutability
+
+A variable is **immutable** unless it is declared `let mut`:
+
+```dijk
+let mut count = 0;    // may be assigned
+let limit = 10;       // may not
+count = count + 1;    // fine
+limit = 11;           // semantic error: cannot assign to immutable variable `limit`
+```
+
+Parameters are immutable too, always: the grammar has no way to declare
+a parameter `mut` (`docs/parser.md`). To change an argument's value,
+copy it into a `let mut` first.
+
+This is a rule about **bindings**, not values: whether `x = …;` is
+allowed depends only on how the name `x` was declared. It is checked
+against whichever binding the name resolves to at that point, so
+shadowing can change the answer:
+
+```dijk
+let mut x = 1;
+if true {
+    let x = 2;   // a new, immutable `x` hides the mutable one
+    x = 3;       // semantic error: this `x` is immutable
+}
+x = 4;           // fine: the outer, mutable `x` again
+```
+
+Whether the assigned *value* has the variable's type is a different
+rule, about values, and belongs to the type checker (E0007 in
+`docs/types.md`). Semantic analysis accepts `let mut x = 1; x = "one";`;
+the type checker rejects it. The two are implemented, reported and
+tested separately.
 
 ## Scopes
 
@@ -182,11 +224,12 @@ visitor does. The resolver overrides:
 
 - `visit_function`, to open the function scope and declare the
   parameters;
-- `visit_statement`, to declare `let`s (after resolving the initializer)
-  and to open a block scope around each `if`/`else` branch and `while`
-  body (the AST has no `Block` node, so these are the places a scope
+- `visit_statement`, to declare `let`s, with their mutability (after
+  resolving the initializer), and to open a block scope around each
+  `if`/`else` branch and `while` body (the AST has no `Block` node, so these are the places a scope
   must be opened explicitly);
-- `visit_expression`, to check identifiers, assignment targets and calls.
+- `visit_expression`, to check identifiers, assignment targets (that
+  they exist, and are mutable) and calls.
 
 Everything else keeps descending through the default `walk_*` functions.
 
@@ -194,12 +237,14 @@ Two tables do the bookkeeping:
 
 ```text
 functions: name → parameter count          the global scope (pass 1)
-scopes:    [ {names}, {names}, ... ]       a stack: function scope first,
+scopes:    [ {name → kind}, ... ]          a stack: function scope first,
                                            innermost block scope last
 ```
 
-Entering a block pushes an empty set of names, and leaving it pops the
-set. A lookup searches the stack from the top down.
+Each scope maps the names it declares to the kind of variable each one
+is: a parameter, an immutable `let`, or a mutable `let mut`. Entering a
+block pushes an empty scope, and leaving it pops the scope. A lookup
+searches the stack from the top down.
 
 ### Errors
 
@@ -226,17 +271,19 @@ Where the caret points:
 - **Identifiers, assignments and calls:** at the name.
 - **Duplicate parameters:** at the parameter.
 - **Duplicate `let`s and duplicate functions:** at the `let` or `fn`
-  keyword, because the AST does not record a separate span for the
-  declared name.
+  keyword. (The AST does not record a separate span for a function's
+  name.)
 - **A missing `main`:** it has no location of its own, so it is anchored
   at the end of the program, where a `main` could be added, or at the
   start of an empty file.
 
-## Relationship to the interpreter
+## Relationship to the type checker and the interpreter
 
-The interpreter (`docs/interpreter.md`) runs only programs that passed
-semantic analysis, and it relies on them. Its environment keeps the
-run-time twin of the resolver's scope stack. The resolver records *which*
-names exist; the environment records each name's current *value*. Because
-both follow the same scoping rules, every name the interpreter looks up
-is found.
+The type checker (`docs/types.md`) runs only on programs that passed
+semantic analysis, and the interpreter (`docs/interpreter.md`) only on
+programs that passed both. Each keeps its own twin of the resolver's
+scope stack. The resolver records *which* names exist, the type checker's
+environment what *type* each has, and the interpreter's environment each
+name's current *value*. Because all three follow the same scoping rules,
+every name the later stages look up is found, and neither of them
+reports an unresolved name again.

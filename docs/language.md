@@ -41,7 +41,8 @@ A Dijk source file uses either extension:
 ```
 
 Both name the same language; every command (`dijk lex`, `dijk parse`,
-`dijk ast`, `dijk run`, and later `dijk build`, ...) accepts either. `.dk` is expected to be the convention used in
+`dijk ast`, `dijk check`, `dijk run`, and later `dijk build`, ...)
+accepts either. `.dk` is expected to be the convention used in
 practice; `.dijk` exists for contexts where `.dk` alone would be
 ambiguous or where the fuller name is preferred.
 
@@ -107,6 +108,11 @@ Deferred to later, once the above is well understood:
 - ownership-related typing
 ```
 
+Of the initial scope, `dijk-0.0.5` implements booleans and the integers
+`i32` and `i64` (plus strings, and `unit` for functions that return
+nothing), with strict compatibility: no implicit conversions between
+types. See `docs/types.md`.
+
 ## Memory model, initial scope
 
 Dijk Core prioritizes educational transparency over an immediately
@@ -132,18 +138,31 @@ is much smaller:
 
 - A program is one or more functions, and it starts running at
   `fn main()`, which takes no parameters (`docs/parser.md` has the
-  grammar).
-- Values are 64-bit integers, booleans, and strings without escapes.
-  Integer arithmetic is checked: overflow is an error, never a silent
-  wrap-around.
-- Variables are declared with `let` and are lexically scoped: a block's
-  variables end with the block, an inner block may shadow an outer
-  variable, and one scope may not declare the same name twice
-  (`docs/semantic.md`).
-- Control flow is `if`/`else` and `while`, with boolean conditions.
-  Functions take arguments by value and may recurse (`docs/interpreter.md`).
-- Type annotations are parsed but not yet checked. A mismatch such as
-  `1 + true` is found only when the program runs, as a runtime error.
+  grammar). `main` may return a value of any type, which `dijk run`
+  prints.
+- Every value has a **static type**: `i32`, `i64`, `bool` or `string`,
+  plus `unit` for "no value". Types are checked before the program runs
+  (`dijk check`, and as part of `dijk run`), and a program with a type
+  error never runs. There are **no implicit conversions**: an `i32` is
+  never accepted where an `i64` is expected, and there is no cast yet
+  (`docs/types.md`).
+- Integer literals are `i32` unless their context expects an `i64`.
+  Integer arithmetic is checked: a result that does not fit in its type is
+  a runtime error, never a silent wrap-around. Strings have no escapes.
+- Variables are declared with `let`, and their type is inferred from the
+  initializer or written as an annotation (`let x: i64 = 0;`). A variable
+  is **immutable** unless declared `let mut`; only a `let mut` may be
+  assigned to, and only with a value of its own type. Variables are
+  lexically scoped: a block's variables end with the block, an inner
+  block may shadow an outer variable, and one scope may not declare the
+  same name twice (`docs/semantic.md`).
+- Control flow is `if`/`else` and `while`, whose conditions must be
+  `bool`.
+- Functions declare the type of every parameter, and their return type
+  with `-> T`; without it they return `unit`. A function with a return
+  type must return a value on every path. Parameters are immutable, and
+  arguments are passed by value. Functions may recurse
+  (`docs/interpreter.md`).
 
 ## Status
 

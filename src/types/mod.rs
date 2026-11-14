@@ -31,7 +31,7 @@
 //! the checker that walks a program giving every expression a type
 //! (`check.rs`). What the checker
 //! *produces* is defined here, because it is this stage's contract with
-//! every stage after it.
+//! every stage after it. See `docs/types.md`.
 
 mod check;
 pub mod env;

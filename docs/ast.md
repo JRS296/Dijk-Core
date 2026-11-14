@@ -20,9 +20,8 @@ let x: i32 = "hello";
 is syntactically a `Let` binding a string literal to a variable annotated
 `i32`. The AST represents exactly that, without complaint — nothing has
 checked that a string can be assigned where an `i32` was declared. That
-check belongs to a later stage: not semantic analysis as it exists today,
-which resolves names only (`docs/semantic.md`), but the type checker
-still to come. Keeping this boundary explicit is why the compiler's
+check belongs to a later stage: not semantic analysis, which resolves
+names (`docs/semantic.md`), but the type checker (`docs/types.md`). Keeping this boundary explicit is why the compiler's
 pipeline stays:
 
 ```text
@@ -165,8 +164,8 @@ Expression
 (`ParseErrorKind::InvalidIntegerLiteral`), not something the AST needs to
 represent. Converting digits to a value is still a syntactic act, distinct
 from asking whether that value is *valid where it appears* (an `i32`
-parameter given a value that doesn't fit — that question is semantic
-analysis's, not yet asked here).
+parameter given a value that doesn't fit — that question is the type
+checker's, `docs/types.md`, not the AST's).
 
 ## Deviations from a "typical" example AST
 
@@ -194,16 +193,16 @@ have, not to a grammar you might have later.
 
 Every node that originated from source code carries a `span: Span`
 (`crate::lexer::token::Span` — the same type the lexer and parser already
-use, not a duplicate). This is what will let the type checker eventually
-report:
+use, not a duplicate). This is what lets the type checker report:
 
 ```text
-error: cannot add `i32` and `string`
-
+type error[E0002]: invalid binary operation: `+`
  --> main.dk:4:13
   |
-4 | let x = a + "hello";
-  |             ^^^^^^^
+4 |     let x = a + "hello";
+  |             ^^^^^^^^^^^
+  = expected `i32 + i32`, `i64 + i64` or `string + string`
+  = found `i32 + string`
 ```
 
 pointing at the *specific* offending expression, not just "somewhere in
@@ -237,6 +236,8 @@ each writing its own recursive match. `dijk ast`'s node-count summary
 analysis's resolver (`docs/semantic.md`) is the second. The interpreter
 deliberately is not a consumer: evaluating a node must *produce a value*,
 which a visitor with no return values cannot do (`docs/interpreter.md`).
+The type checker is not one either, for the same reason: checking a node
+must produce its *type* (`docs/types.md`).
 
 ## Invariants
 
@@ -252,12 +253,17 @@ things the Rust type system enforces on their own:
 - The parser never constructs an AST node for syntactically invalid
   input — a construct that fails to parse produces a `ParseError`
   instead, never a partially-valid node standing in for it.
+- No two expressions in a program have the same span: a parent
+  expression strictly contains its children, and siblings never overlap
+  (parentheses create no node, so `(e)` and `e` are one expression). The
+  AST has no node IDs, so the type checker relies on this to key its
+  table of expression types by span (`docs/types.md`).
 
 ## What the AST does not know
 
 The AST doesn't know what `x` refers to, whether types agree, or what a
 program *does*. Later stages answer those questions, each reading the
 AST without changing it. Semantic analysis resolves what names refer to
-(`docs/semantic.md`), and the interpreter executes the program
-(`docs/interpreter.md`). Whether types agree is for the type checker,
-still to come; `docs/roadmap.md` has the current plan.
+(`docs/semantic.md`), the type checker decides whether types agree
+(`docs/types.md`), and the interpreter executes the program
+(`docs/interpreter.md`).

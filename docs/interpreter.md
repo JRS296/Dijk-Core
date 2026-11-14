@@ -14,7 +14,7 @@ dijk run hello.dk
 ```
 
 ```dijk
-fn main() {
+fn main() -> i32 {
     let x = 10;
     let y = x + 20;
 
@@ -28,12 +28,14 @@ fn main() {
 
 Every stage before this one only *described* the program. The lexer found
 its pieces (`docs/lexer.md`), the parser its structure (`docs/parser.md`),
-the AST recorded what was written (`docs/ast.md`), and semantic analysis
-checked that its names mean something (`docs/semantic.md`). The
-interpreter is the first stage that *does* what the program says:
+the AST recorded what was written (`docs/ast.md`), semantic analysis
+checked that its names mean something (`docs/semantic.md`), and type
+checking that its operations are valid for their values
+(`docs/types.md`). The interpreter is the first stage that *does* what
+the program says:
 
 ```text
-Source → Lexer → Parser → AST → Semantic analysis → Interpreter → 30
+Source → Lexer → Parser → AST → Semantic analysis → Type checking → Interpreter → 30
 ```
 
 ## A tree-walking interpreter
@@ -66,24 +68,60 @@ a value and must be able to fail.
 
 **AST nodes are source. Evaluating them produces runtime values.** An
 `Expression::Integer(10, span)` records that someone *wrote* `10`, and
-where. A `Value::Integer(10)` is the number ten, produced while the
-program runs, with no source position at all. `1 + 2` and `3` are
-different expressions that evaluate to the same value.
+where. A `Value::I32(10)` is the number ten, produced while the program
+runs, with no source position at all. `1 + 2` and `3` are different
+expressions that evaluate to the same value.
 
 ```text
 Value                      src/interpreter/value.rs
-├── Integer(i64)           e.g. 30
+├── I32(i32)               a value of type i32, e.g. 30
+├── I64(i64)               a value of type i64, e.g. 3000000000
 ├── Boolean(bool)          true, false
 ├── String(String)         e.g. hello  (printed without quotes)
 └── Unit                   "no value": what a function returns when it
                            returns nothing
 ```
 
-There is one variant per kind of literal the language has, plus `Unit`.
-Every integer is a 64-bit `i64` at run time. An `i32` annotation is just
-a name until the type checker exists. Floats, arrays, structs, references
-and functions-as-values will each add a variant when the language gains
-them.
+There is **one variant per type** (`docs/types.md`), so every value
+carries its type at run time, and `I32(5)` and `I64(5)` are different
+values. Floats, arrays, structs, references and functions-as-values will
+each add a variant when the language gains them.
+
+### Integers: `i32` and `i64`
+
+The type checker decides whether each integer literal is an `i32` or an
+`i64` (an `i32` unless its context expects an `i64`) and records the
+decision in the `TypedProgram` it produces. Evaluating a literal looks
+that decision up and builds a value of that type. That is the **only**
+thing the interpreter takes from the type checker. Every other integer
+is the result of an operation, and has its operands' type.
+
+Integer arithmetic is **defined by Dijk**, not inherited from whatever
+the implementation language happens to do:
+
+```text
+1. compute the true, mathematical result (exactly, in a wider type)
+2. if it fits in the operands' type, that is the result
+3. otherwise it is a runtime error: integer overflow
+```
+
+So an `i32` overflows exactly where a real 32-bit integer would:
+
+```text
+2147483647 + 1               i32: runtime error: integer overflow … `i32`
+2147483647 + 1 (as i64)      i64: 2147483648
+-2147483648 / -1             i32: runtime error: integer overflow
+```
+
+Nothing ever silently wraps around, and nothing crashes. Division
+truncates toward zero (`-7 / 2` is `-3`), and dividing by zero is a
+runtime error. Negating, or dividing by `-1`, the smallest value of a type
+overflows, because the true result is one more than its largest value.
+
+Before `dijk-0.0.5`, every integer was an `i64` at run time, whatever
+its annotation said, so a program checked as `i32` could quietly compute
+values no `i32` can hold. Distinct runtime values keep the running
+program consistent with the types it was checked against.
 
 ## The environment
 
@@ -118,8 +156,9 @@ Function scope   x → 10          ← opened when the call starts
 | `assign(name, value)` | `x = …` | Change the innermost variable of that name. Never creates one |
 | `push_scope` / `pop_scope` | entering / leaving a block | The function scope is never popped |
 
-This is the run-time twin of the scope stack semantic analysis keeps, and
-it follows exactly the same rules (`docs/semantic.md`). There is no global
+This is the run-time twin of the scope stack semantic analysis keeps (and
+of the type checker's environment of types), and it follows exactly the
+same rules (`docs/semantic.md`). There is no global
 variable scope, because Dijk has no global variables. Its only global
 names are functions, which the interpreter keeps in a separate table.
 
@@ -141,30 +180,23 @@ names are functions, which the interpreter keeps in a separate table.
   which is what makes the right-associative chain `a = b = 7` assign `7`
   to both.
 
-Without a type checker, the interpreter is the only place that notices
-an operator applied to the wrong kind of value. The rules:
+The type checker has already made sure every operator is applied to
+operands it has a rule for (`docs/types.md`), so the interpreter only
+has to give those rules their meaning:
 
 ```text
-integer  + - * /    integer   → integer   (checked: overflow is an error)
-string   +          string    → string    (concatenation)
-integer  < <= > >=  integer   → boolean
-a        == !=      a         → boolean   (operands of the same kind)
-- integer                     → integer   (checked)
-! boolean                     → boolean
-anything else                 → runtime error: invalid operation
+i32 + - * / i32,  i64 + - * / i64   → same type   (checked: overflow is an error)
+string + string                     → string      (concatenation)
+i32 < <= > >= i32, same for i64     → bool
+a == != a   (i32, i64, bool, string) → bool
+- i32, - i64                        → same type   (checked)
+! bool                              → bool
 ```
 
-- **Integer arithmetic is checked.** A result that does not fit in 64 bits
-  is a runtime error, never a silent wrap-around and never a crash. That
-  includes negating, or dividing by `-1`, the most negative integer.
-- **Division truncates toward zero**, so `-7 / 2` is `-3`. Dividing by zero
-  is a runtime error.
-- **Equality requires operands of the same kind.** `1 == true` is an
-  invalid operation, not `false`. The type checker will eventually reject
-  such comparisons before the program runs.
-- **Ordering is only defined for integers.** `"a" < "b"` is an invalid
-  operation, and so is `1 < 2 < 3`: it parses as `(1 < 2) < 3`, which
-  compares a boolean with an integer.
+Anything else (`1 + true`, `"a" - "b"`, an `i32` plus an `i64`) is a
+type error, and a program containing one never runs. The interpreter
+still reports it as a runtime `invalid operation`, rather than crashing,
+if it is ever handed a program nobody checked.
 
 ## Statements and control flow
 
@@ -179,8 +211,8 @@ the environment, not for a value.
 | `while c { … }` | evaluate `c`; while it is `true`, run the block and evaluate `c` again |
 | `return e;` / `return;` | end the current function call with the value of `e` / with `Unit` |
 
-- **Conditions must be booleans.** There is no "truthiness": `if 5` and
-  `while 0` are runtime errors, not "true because it's non-zero".
+- **Conditions are booleans.** There is no "truthiness": `if 5` and
+  `while 0` are type errors (E0006), not "true because it's non-zero".
 - **Every branch and loop body runs in a block scope of its own.** It is
   pushed on entry and popped on exit however the block finishes. A `while`
   body gets a **fresh scope on every iteration**, so a `let` inside a loop
@@ -203,7 +235,7 @@ fn add(a: i32, b: i32) -> i32 {
     return a + b;
 }
 
-fn main() {
+fn main() -> i32 {
     let x = add(10, 20);
     return x;
 }
@@ -234,8 +266,10 @@ Consequences worth knowing:
 
 - **A function sees only its own frame.** It can neither read nor change
   its caller's variables. They are in a different environment.
-- **Arguments are passed by value.** Assigning to a parameter changes the
-  callee's copy, not the caller's variable.
+- **Arguments are passed by value.** Parameters are immutable, so a
+  function that wants to change an argument copies it into a `let mut`,
+  and that copy is the callee's alone. The caller's variable never
+  changes.
 - **Each call gets fresh locals.** Nothing persists from one call of a
   function to the next.
 - **Recursion needs nothing special.** Each recursive call pushes another
@@ -347,13 +381,16 @@ Err(RuntimeError)              unwind all the way out and report
 A sequence of statements stops at the first `Return`. `if` passes it
 outward, and `while` stops looping and passes it outward. Only a function
 call consumes it, turning it into the call's value. A body that runs out
-of statements returns `Unit`, and so does `return;`. Expressions, by
+of statements returns `Unit`, and so does `return;`. The type checker
+has made sure both only happen in a function that returns `unit`: a
+function with `-> T` must return a value of type `T` on every path. Expressions, by
 contrast, simply produce `Result<Value, RuntimeError>`: an expression
 cannot contain a `return`.
 
 ## Runtime errors
 
-Semantic analysis rejects programs that cannot mean anything. Some
+Semantic analysis rejects programs that cannot mean anything, and the
+type checker programs whose operations don't fit their values. Some
 problems, though, depend on the *values* a program computes, and no
 earlier stage can see them. They are **runtime errors**, reported against
 the expression being evaluated when things went wrong:
@@ -376,27 +413,27 @@ stack is abbreviated:
 | Error | Example | Message |
 |---|---|---|
 | Division by zero | `10 / 0` | `division by zero` (caret on the divisor) |
-| Integer overflow | `9223372036854775807 + 1` | `integer overflow: the result of `+` does not fit in 64 bits` |
-| Invalid binary operation | `1 + true`, `"a" - "b"`, `1 == true` | `invalid operation: cannot apply `+` to integer and boolean` |
-| Invalid unary operation | `-true`, `!1` | `invalid operation: cannot apply `-` to boolean` |
-| Non-boolean condition | `if 5 { … }` | `invalid operation: a condition must be a boolean, found integer` |
+| Integer overflow | `2147483647 + 1` | `integer overflow: the result of `+` does not fit in `i32`` |
 | Call depth exceeded | unbounded recursion | `stack overflow: more than 1000 nested function calls` |
 
-Four more kinds exist that `dijk run` can never produce: `undefined
-variable`, `undefined function`, `wrong number of arguments` and
-`no main function`. Semantic analysis rejects those programs first, with
-better diagnostics. The interpreter still reports them, rather than
+More kinds exist that `dijk run` can never produce, because an earlier
+stage rejects those programs first, with better diagnostics: `undefined
+variable`, `undefined function`, `wrong number of arguments` and `no main
+function` (semantic analysis), and `invalid operation` (an operator or a
+condition given the wrong kind of value) and `integer literal … does not
+fit` (the type checker). The interpreter still reports them, rather than
 crashing, if it is ever handed a program nobody checked. The tests hand
-it one on purpose.
+it such programs on purpose.
 
-The four classes of error form a ladder. Each stage detects a different
+The five classes of error form a ladder. Each stage detects a different
 kind of problem, and `dijk run` stops at the first stage that finds one:
 
 ```text
-error:            lexical   "What are the pieces?"      unexpected character
-error:            parse     "How do they fit?"          expected ')'
-semantic error:             "What do the names mean?"   unknown identifier
-runtime error:              "What happens?"             division by zero
+error:              lexical   "What are the pieces?"        unexpected character
+error:              parse     "How do they fit?"            expected ')'
+semantic error:               "What do the names mean?"     unknown identifier
+type error[E…]:               "Are the operations valid?"   type mismatch
+runtime error:                "What happens?"               division by zero
 ```
 
 ## `dijk run`
@@ -413,7 +450,9 @@ lex ──errors?──→ report, exit 1
  ↓
 parse ──errors?──→ report, exit 1         (a partial AST is never analyzed)
  ↓
-semantic analysis ──errors?──→ report, exit 1   (nothing is executed)
+semantic analysis ──errors?──→ report, exit 1
+ ↓
+type checking ──errors?──→ report, exit 1       (nothing is executed)
  ↓
 interpret ──runtime error?──→ report, exit 1
  ↓
@@ -421,7 +460,8 @@ print main's value, exit 0
 ```
 
 - The program starts at `fn main()`, which takes no parameters and is
-  called with none.
+  called with none. It may return any type (`fn main() -> i32`), or
+  nothing.
 - On success, the value `main` returns is printed on its own line (`30`,
   `true`, or a string without quotes). **If `main` returns nothing
   (`Unit`), nothing is printed.** The exit code is 0. It is not the
@@ -437,7 +477,7 @@ fn double(x: i32) -> i32 {
     return x * 2;
 }
 
-fn main() {
+fn main() -> i32 {
     let x = 10;
     let y = double(x);
 

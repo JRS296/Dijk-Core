@@ -83,8 +83,9 @@ Self-hosting
 - [docs/lexer.md](docs/lexer.md) — lexical grammar implemented by `dijk lex`
 - [docs/parser.md](docs/parser.md) — grammar and parsing strategy implemented by `dijk parse`
 - [docs/ast.md](docs/ast.md) — the AST shape, parse-tree-vs-AST, invariants, and traversal
-- [docs/semantic.md](docs/semantic.md) — semantic analysis: name resolution, lexical scopes, and semantic errors
-- [docs/interpreter.md](docs/interpreter.md) — the execution model: values, environments, call frames, return propagation, runtime errors, and `dijk run`
+- [docs/semantic.md](docs/semantic.md) — semantic analysis: name resolution, lexical scopes, mutability, and semantic errors
+- [docs/types.md](docs/types.md) — the static type system: types, typing rules, inference, return paths, diagnostic codes, and `dijk check`
+- [docs/interpreter.md](docs/interpreter.md) — the execution model: values (`i32`/`i64`), environments, call frames, return propagation, runtime errors, and `dijk run`
 - [docs/testing.md](docs/testing.md) — automated tests and manual CLI testing
 - [CHANGELOG.md](CHANGELOG.md) — what shipped in each release
 
@@ -100,6 +101,8 @@ cargo run -- doctor
 cargo run -- lex examples/hello.dk
 cargo run -- parse examples/hello.dk
 cargo run -- ast examples/hello.dk
+cargo run -- check examples/add.dk
+cargo run -- check --types examples/add.dk
 cargo run -- run examples/factorial.dk
 cargo test
 ```
@@ -198,9 +201,34 @@ fn main() -> i32 {
 120
 ```
 
-A program that is well-formed but meaningless is rejected before it
-runs, and a problem that only appears while running is reported with the
-call stack at that moment:
+`dijk check` takes a program through every stage up to type checking,
+without running it:
+
+```text
+$ dijk check examples/add.dk
+Checking examples/add.dk...
+Lexical analysis       OK
+Parsing                OK
+Semantic analysis      OK
+Type checking          OK
+
+Program is well-typed.
+```
+
+and `dijk check --types` then shows what the type checker learned: each
+function's signature, and the type of every variable it declares:
+
+```text
+fn add(a: i32, b: i32) -> i32
+    a      : i32   (1:8)
+    b      : i32   (1:16)
+    result : i32   (2:9)
+fn main() -> i32
+```
+
+A program that is well-formed but meaningless, or whose operations do
+not fit its types, is rejected before it runs, and a problem that only
+appears while running is reported with the call stack at that moment:
 
 ```text
 $ dijk run examples/semantic_error.dk
@@ -209,6 +237,15 @@ semantic error: unknown identifier `y`
   |
 8 |     return y;
   |            ^
+
+$ dijk run examples/type_error.dk
+type error[E0001]: type mismatch
+ --> examples/type_error.dk:2:18
+  |
+2 |     let x: i32 = "hello";
+  |                  ^^^^^^^
+  = expected `i32`
+  = found `string`
 
 $ dijk run examples/runtime_error.dk
 runtime error: division by zero
