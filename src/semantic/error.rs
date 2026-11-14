@@ -27,6 +27,9 @@ pub enum SemanticErrorKind {
     DuplicateFunction { name: String },
     /// Two parameters of one function share a name.
     DuplicateParameter { name: String },
+    /// A `let` declares a name that is already declared in the *same*
+    /// scope. (Declaring it in an inner scope is shadowing, and allowed.)
+    DuplicateVariable { name: String },
     /// The program defines no `main`, so there is nowhere to start
     /// running it.
     MissingMain,
@@ -67,6 +70,9 @@ impl SemanticError {
             }
             SemanticErrorKind::DuplicateParameter { name } => {
                 format!("parameter `{name}` is declared more than once")
+            }
+            SemanticErrorKind::DuplicateVariable { name } => {
+                format!("variable `{name}` is already declared in this scope")
             }
             SemanticErrorKind::MissingMain => {
                 "no `main` function: a Dijk program starts running at `fn main()`".to_string()

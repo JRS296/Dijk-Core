@@ -294,6 +294,112 @@ fn main_must_not_take_parameters() {
     );
 }
 
+// --- lexical scopes ---
+
+fn duplicate_variable(name: &str) -> SemanticErrorKind {
+    SemanticErrorKind::DuplicateVariable {
+        name: name.to_string(),
+    }
+}
+
+#[test]
+fn a_block_variable_is_not_visible_after_the_block() {
+    // Step 4's own example: `y` exists only inside the `if`.
+    assert_eq!(
+        kinds("fn main() {\n    let x = 10;\n    if true {\n        let y = 20;\n    }\n    return y;\n}\n"),
+        vec![unknown_identifier("y")]
+    );
+}
+
+#[test]
+fn a_loop_body_variable_is_not_visible_after_the_loop() {
+    assert_eq!(
+        kinds("fn main() {\n    while false {\n        let t = 1;\n    }\n    t = 2;\n}\n"),
+        vec![SemanticErrorKind::AssignToUndeclared {
+            name: "t".to_string()
+        }]
+    );
+}
+
+#[test]
+fn the_then_branch_and_else_branch_are_separate_scopes() {
+    assert_eq!(
+        kinds("fn main() {\n    if true {\n        let a = 1;\n    } else {\n        return a;\n    }\n}\n"),
+        vec![unknown_identifier("a")]
+    );
+}
+
+#[test]
+fn outer_variables_are_visible_in_nested_blocks() {
+    assert_valid(
+        "fn main() {\n    let total = 0;\n    while total < 10 {\n        if total == 5 {\n            total = total + 2;\n        } else {\n            total = total + 1;\n        }\n    }\n    return total;\n}\n",
+    );
+}
+
+#[test]
+fn duplicate_let_in_the_same_scope_is_reported() {
+    let source = "fn main() {\n    let x = 1;\n    let x = 2;\n}\n";
+    let errors = analyze(source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, duplicate_variable("x"));
+    // Reported at the second `let`.
+    assert_eq!(errors[0].span.start, source.rfind("let").unwrap());
+}
+
+#[test]
+fn duplicate_let_in_the_same_block_is_reported() {
+    assert_eq!(
+        kinds("fn main() {\n    if true {\n        let x = 1;\n        let x = 2;\n    }\n}\n"),
+        vec![duplicate_variable("x")]
+    );
+}
+
+#[test]
+fn a_let_cannot_redeclare_a_parameter() {
+    // Parameters and the body's top-level `let`s share the function scope.
+    assert_eq!(
+        kinds("fn f(n: i32) {\n    let n = 2;\n}\nfn main() { f(1); }\n"),
+        vec![duplicate_variable("n")]
+    );
+}
+
+#[test]
+fn shadowing_in_an_inner_scope_is_allowed() {
+    assert_valid("fn main() {\n    let x = 1;\n    if true {\n        let x = \"inner\";\n        x = \"still inner\";\n    }\n    return x;\n}\n");
+}
+
+#[test]
+fn a_parameter_may_be_shadowed_in_a_block() {
+    assert_valid(
+        "fn f(n: i32) {\n    while n > 0 {\n        let n = 0;\n    }\n}\nfn main() { f(1); }\n",
+    );
+}
+
+#[test]
+fn sibling_blocks_may_reuse_a_name() {
+    assert_valid("fn main() {\n    if true {\n        let t = 1;\n    }\n    while false {\n        let t = 2;\n    }\n}\n");
+}
+
+#[test]
+fn each_else_if_branch_has_its_own_scope() {
+    assert_eq!(
+        kinds("fn main() {\n    if false {\n        let a = 1;\n    } else if true {\n        let b = a;\n    } else {\n        let c = b;\n    }\n}\n"),
+        vec![unknown_identifier("a"), unknown_identifier("b")]
+    );
+}
+
+#[test]
+fn scopes_nest_arbitrarily_deep() {
+    assert_valid("fn main() {\n    let a = 1;\n    if true {\n        let b = a;\n        while false {\n            let c = a + b;\n            if true {\n                return a + b + c;\n            }\n        }\n    }\n}\n");
+}
+
+#[test]
+fn a_shadowing_let_can_read_the_variable_it_shadows() {
+    // The initializer is resolved before the new `x` exists, so it sees
+    // the outer one.
+    assert_valid("fn main() {\n    let x = 1;\n    if true {\n        let x = x + 1;\n    }\n}\n");
+}
+
 // --- reporting ---
 
 #[test]

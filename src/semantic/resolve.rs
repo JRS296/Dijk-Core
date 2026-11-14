@@ -24,6 +24,34 @@
 //! (`foo(...)`) can only mean a function, and a name anywhere else can
 //! only mean a variable. The two are looked up in separate tables and
 //! never interfere.
+//!
+//! # Lexical scopes
+//!
+//! Where a variable is visible is decided by where it is *written*: its
+//! enclosing braces. Scopes nest:
+//!
+//! ```text
+//! Global scope       every function (the `functions` table)
+//!     │
+//!     └── Function scope    parameters, and `let`s directly in the body
+//!            │
+//!            └── Block scope    `let`s inside an `if`/`else` branch or
+//!                               a `while` body, nested as deeply as the
+//!                               blocks are
+//! ```
+//!
+//! Dijk has no global variables, so the global scope holds only
+//! functions, and it is kept as its own table. Variable scopes form a
+//! stack: entering a block pushes an empty scope, leaving it pops the
+//! scope, and every name the block declared disappears with it. Looking
+//! a name up searches the stack from the innermost scope outward.
+//!
+//! A `let` may reuse a name from an *outer* scope. This is shadowing:
+//! the inner variable hides the outer one until the block ends. Reusing
+//! a name within the *same* scope is an error, because the second `let`
+//! would silently make the first variable unreachable. Parameters and
+//! the body's top-level `let`s share the function scope, so a `let`
+//! cannot redeclare a parameter either.
 
 use super::error::{SemanticError, SemanticErrorKind};
 use crate::ast::declaration::{Declaration, Function, Program};
@@ -38,7 +66,7 @@ use std::collections::{HashMap, HashSet};
 pub fn resolve(program: &Program) -> Vec<SemanticError> {
     let mut resolver = Resolver {
         functions: HashMap::new(),
-        variables: HashSet::new(),
+        scopes: Vec::new(),
         errors: Vec::new(),
     };
 
@@ -55,15 +83,49 @@ struct Resolver {
     /// Every function in the program: name → number of parameters.
     /// Filled by pass 1, before any body is resolved.
     functions: HashMap<String, usize>,
-    /// The variables declared so far in the function currently being
-    /// resolved: its parameters, then each `let` in the order it appears.
-    variables: HashSet<String>,
+    /// The variable scopes enclosing the node currently being resolved,
+    /// innermost last. While a function is being resolved, the first
+    /// entry is its function scope; it is empty between functions.
+    scopes: Vec<HashSet<String>>,
     errors: Vec<SemanticError>,
 }
 
 impl Resolver {
     fn error(&mut self, kind: SemanticErrorKind, span: Span) {
         self.errors.push(SemanticError::new(kind, span));
+    }
+
+    fn begin_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn end_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    /// Declare `name` in the innermost scope. Returns `false`, declaring
+    /// nothing, if that scope already has a variable of that name.
+    fn declare(&mut self, name: &str) -> bool {
+        match self.scopes.last_mut() {
+            Some(scope) => scope.insert(name.to_string()),
+            None => false,
+        }
+    }
+
+    /// Whether `name` is visible from the current point: declared in the
+    /// innermost scope or any scope enclosing it.
+    fn is_visible(&self, name: &str) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(name))
+    }
+
+    /// Resolve the statements of an `if`/`else` branch or a `while` body
+    /// in a scope of their own.
+    fn resolve_block(&mut self, statements: &[Statement]) {
+        self.begin_scope();
+        for stmt in statements {
+            self.visit_statement(stmt);
+        }
+        self.end_scope();
     }
 
     /// Pass 1. A second function with an already-used name is reported
@@ -119,7 +181,7 @@ impl Resolver {
 
     /// A variable use (not a call, not an assignment target).
     fn resolve_variable(&mut self, name: &str, span: Span) {
-        if !self.variables.contains(name) {
+        if !self.is_visible(name) {
             self.error(
                 SemanticErrorKind::UnknownIdentifier {
                     name: name.to_string(),
@@ -132,7 +194,7 @@ impl Resolver {
     /// An assignment target must already exist: `x = 1;` changes `x`, it
     /// does not declare it.
     fn resolve_assignment_target(&mut self, name: &str, span: Span) {
-        if !self.variables.contains(name) {
+        if !self.is_visible(name) {
             self.error(
                 SemanticErrorKind::AssignToUndeclared {
                     name: name.to_string(),
@@ -166,13 +228,13 @@ impl Resolver {
 }
 
 impl Visitor for Resolver {
-    /// Each function starts with no variables but its parameters: a body
-    /// cannot see the variables of any other function.
+    /// Each function opens a fresh function scope holding only its
+    /// parameters: a body cannot see the variables of any other function.
     fn visit_function(&mut self, function: &Function) {
-        self.variables.clear();
+        self.begin_scope();
 
         for param in &function.params {
-            if !self.variables.insert(param.name.clone()) {
+            if !self.declare(&param.name) {
                 self.error(
                     SemanticErrorKind::DuplicateParameter {
                         name: param.name.clone(),
@@ -182,19 +244,53 @@ impl Visitor for Resolver {
             }
         }
 
+        // The body's top-level statements live in the function scope
+        // itself, alongside the parameters.
         visit::walk_function(self, function);
+        self.end_scope();
     }
 
     /// `let` is the one statement that introduces a name. Its initializer
     /// is resolved *before* the name is declared, so `let x = x;` refers
-    /// to some earlier `x`, never to the variable being declared.
+    /// to some earlier (outer) `x`, never to the variable being declared.
+    ///
+    /// `if` and `while` are where blocks begin: each branch and each loop
+    /// body gets its own scope. The AST has no `Block` node, so these are
+    /// the places a scope has to be opened explicitly.
     fn visit_statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Let { name, value, .. } => {
+            Statement::Let {
+                name, value, span, ..
+            } => {
                 self.visit_expression(value);
-                self.variables.insert(name.clone());
+                if !self.declare(name) {
+                    self.error(
+                        SemanticErrorKind::DuplicateVariable { name: name.clone() },
+                        *span,
+                    );
+                }
             }
-            _ => visit::walk_statement(self, stmt),
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.visit_expression(condition);
+                self.resolve_block(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.resolve_block(else_branch);
+                }
+            }
+            Statement::While {
+                condition, body, ..
+            } => {
+                self.visit_expression(condition);
+                self.resolve_block(body);
+            }
+            Statement::Return { .. } | Statement::Expression { .. } => {
+                visit::walk_statement(self, stmt)
+            }
         }
     }
 
