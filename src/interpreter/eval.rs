@@ -43,33 +43,225 @@
 //! checked the program against. A `while` body gets a fresh scope on
 //! every iteration, so a `let` inside the loop declares a new variable
 //! each time around.
+//!
+//! # Function calls
+//!
+//! Every call gets a **call frame**: a fresh environment of its own,
+//! holding the callee's parameters and everything its body declares. The
+//! frames of all calls in progress form the **call stack**:
+//!
+//! ```text
+//! fn add(a: i32, b: i32) -> i32 { return a + b; }
+//! fn main() { let x = add(10, 20); return x; }
+//!
+//! Call stack, while `add` runs:
+//! ┌─────────────────────┐
+//! │ add   a → 10        │  ← top: the running call
+//! │       b → 20        │
+//! ├─────────────────────┤
+//! │ main  (x not yet    │  ← waiting for `add` to finish
+//! │        declared)    │
+//! └─────────────────────┘
+//! ```
+//!
+//! A call evaluates its arguments in the *caller's* frame, left to right.
+//! It then pushes a new frame that binds each parameter to its argument,
+//! runs the body in it, and pops the frame. A body can only ever see its
+//! own frame, which is why a function cannot touch its caller's
+//! variables. Recursion needs nothing special: each recursive call simply
+//! pushes another frame, with its own copy of every parameter.
+//!
+//! Each Dijk call also nests a few Rust calls (`call_function` →
+//! `execute_statement` → `evaluate` → …), so Dijk's call stack lives on
+//! top of Rust's own, finite, stack. Unbounded recursion in a Dijk program
+//! would eventually exhaust it and crash the interpreter itself. The
+//! call stack is therefore capped at [`MAX_CALL_DEPTH`] frames, and going
+//! deeper is a runtime error, the interpreter's version of a "stack
+//! overflow". (The interpreter runs on a thread whose Rust stack is sized
+//! to hold that many calls with room to spare; see `STACK_SIZE` in
+//! `mod.rs`.)
 
 use super::environment::Environment;
 use super::error::{RuntimeError, RuntimeErrorKind};
 use super::value::Value;
+use crate::ast::declaration::{Declaration, Function, Program};
 use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use crate::ast::statement::Statement;
 use crate::lexer::token::Span;
+use std::collections::HashMap;
 
-/// The state of a running program: for now, one environment of
-/// variables that every statement and expression runs against.
-pub struct Interpreter {
+/// The most calls that may be in progress at once, `main` included.
+pub const MAX_CALL_DEPTH: usize = 1000;
+
+/// One call in progress.
+struct CallFrame<'p> {
+    /// The function this frame is running, as a call stack lists it.
+    function: &'p str,
+    /// This call's variables: its parameters, then whatever its body
+    /// declares.
     environment: Environment,
 }
 
-impl Interpreter {
-    pub fn new() -> Self {
+/// The state of a running program.
+pub struct Interpreter<'p> {
+    /// The global scope: every function in the program, by name.
+    functions: HashMap<&'p str, &'p Function>,
+    /// Every call in progress, outermost (`main`) first. The top frame
+    /// is the running call, and its environment is the one statements
+    /// and expressions read and write.
+    call_stack: Vec<CallFrame<'p>>,
+}
+
+impl<'p> Interpreter<'p> {
+    /// Prepare to run `program`: enter every function into the global
+    /// scope. If two functions share a name the first one wins, matching
+    /// what semantic analysis resolves calls to (and reports as an error).
+    pub fn new(program: &'p Program) -> Self {
+        let mut functions = HashMap::new();
+        for declaration in &program.declarations {
+            let Declaration::Function(function) = declaration;
+            functions.entry(function.name.as_str()).or_insert(function);
+        }
+
         Self {
-            environment: Environment::new(),
+            functions,
+            call_stack: Vec::new(),
         }
     }
 
+    /// Run the program: call `main` with no arguments and return the
+    /// value it returns.
+    pub fn run_main(&mut self) -> Result<Value, RuntimeError> {
+        match self.functions.get("main").copied() {
+            Some(main) => self.call_function(main, Vec::new(), main.span),
+            None => Err(RuntimeError::new(
+                RuntimeErrorKind::MissingMain,
+                Span::new(0, 0),
+            )),
+        }
+    }
+
+    /// Call `function` with already-evaluated `arguments`: push a frame
+    /// binding each parameter to its argument, run the body in it, pop
+    /// the frame. `call_span` is where the call was written, so that a
+    /// call that cannot be made is reported there.
+    fn call_function(
+        &mut self,
+        function: &'p Function,
+        arguments: Vec<Value>,
+        call_span: Span,
+    ) -> Result<Value, RuntimeError> {
+        if self.call_stack.len() == MAX_CALL_DEPTH {
+            return Err(RuntimeError::new(
+                RuntimeErrorKind::CallDepthExceeded {
+                    limit: MAX_CALL_DEPTH,
+                },
+                call_span,
+            ));
+        }
+
+        // Semantic analysis has already checked every call's argument
+        // count; this is the interpreter's own guard against a program
+        // that skipped it.
+        if arguments.len() != function.params.len() {
+            return Err(RuntimeError::new(
+                RuntimeErrorKind::ArityMismatch {
+                    name: function.name.clone(),
+                    expected: function.params.len(),
+                    found: arguments.len(),
+                },
+                call_span,
+            ));
+        }
+
+        let mut environment = Environment::new();
+        for (param, argument) in function.params.iter().zip(arguments) {
+            environment.define(&param.name, argument);
+        }
+
+        self.call_stack.push(CallFrame {
+            function: &function.name,
+            environment,
+        });
+        let result = self.execute_body(&function.body);
+        let frame = self.call_stack.pop();
+
+        // An error leaving this call passes through its frame on the way
+        // out. Recording each frame it passes through rebuilds the call
+        // stack as it was at the moment of the error, innermost first.
+        result.map_err(|mut error| {
+            if let Some(frame) = frame {
+                error.call_stack.push(frame.function.to_string());
+            }
+            error
+        })
+    }
+
+    /// Run a function body, directly in the function scope (the
+    /// parameters' scope), and produce the call's value.
+    ///
+    /// A `return` written directly in the body ends the call with its
+    /// value. A body that runs out of statements returns `Unit`. A
+    /// `return` nested inside an `if` or `while` cannot be seen from
+    /// here: it runs as an ordinary statement (see `execute_statement`),
+    /// and does not yet end the call.
+    fn execute_body(&mut self, body: &[Statement]) -> Result<Value, RuntimeError> {
+        for stmt in body {
+            if let Statement::Return { value, .. } = stmt {
+                return match value {
+                    Some(value) => self.evaluate(value),
+                    None => Ok(Value::Unit),
+                };
+            }
+            self.execute_statement(stmt)?;
+        }
+        Ok(Value::Unit)
+    }
+
+    // --- the running call's environment ---
+    //
+    // Statements and expressions only ever run inside `call_function`,
+    // so a frame is always on the stack while they do. These helpers act
+    // on the top frame's environment. If the stack were somehow empty,
+    // they would behave as if no variable existed.
+
+    fn lookup(&self, name: &str) -> Option<&Value> {
+        self.call_stack.last()?.environment.lookup(name)
+    }
+
+    fn define(&mut self, name: &str, value: Value) {
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.environment.define(name, value);
+        }
+    }
+
+    fn assign(&mut self, name: &str, value: Value) -> bool {
+        match self.call_stack.last_mut() {
+            Some(frame) => frame.environment.assign(name, value),
+            None => false,
+        }
+    }
+
+    fn push_scope(&mut self) {
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.environment.push_scope();
+        }
+    }
+
+    fn pop_scope(&mut self) {
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.environment.pop_scope();
+        }
+    }
+
+    // --- statements ---
+
     /// Execute `statements` in a new block scope. The scope is popped
     /// whether the statements finish normally or fail.
-    pub fn execute_block(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
-        self.environment.push_scope();
+    fn execute_block(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+        self.push_scope();
         let result = self.execute_statements(statements);
-        self.environment.pop_scope();
+        self.pop_scope();
         result
     }
 
@@ -82,11 +274,11 @@ impl Interpreter {
         Ok(())
     }
 
-    pub fn execute_statement(&mut self, stmt: &Statement) -> Result<(), RuntimeError> {
+    fn execute_statement(&mut self, stmt: &Statement) -> Result<(), RuntimeError> {
         match stmt {
             Statement::Let { name, value, .. } => {
                 let value = self.evaluate(value)?;
-                self.environment.define(name, value);
+                self.define(name, value);
                 Ok(())
             }
             // An expression statement is evaluated for its effect (an
@@ -119,10 +311,11 @@ impl Interpreter {
                 }
                 Ok(())
             }
-            // `return` hands a value back to whoever called the current
-            // function. Nothing calls functions yet, so there is no one
-            // to hand it to: the value is evaluated (which may fail), and
-            // execution carries on with the next statement.
+            // A `return` directly in a function body never reaches this
+            // point: `execute_body` handles it. One nested in a block has
+            // no way yet to stop the statements around it from running,
+            // so its value is evaluated (which may fail) and execution
+            // carries on with the next statement.
             Statement::Return { value, .. } => {
                 if let Some(value) = value {
                     self.evaluate(value)?;
@@ -180,16 +373,11 @@ impl Interpreter {
             Expression::Assign { name, value, span } => {
                 self.evaluate_assignment(name, value, *span)
             }
-            // Calling a function needs functions to call, and a fresh
-            // environment for each call. This interpreter has neither: it
-            // evaluates everything against one environment and knows no
-            // functions, so every callee is undefined.
-            Expression::Call { callee, span, .. } => Err(RuntimeError::new(
-                RuntimeErrorKind::UndefinedFunction {
-                    name: callee.clone(),
-                },
-                *span,
-            )),
+            Expression::Call {
+                callee,
+                arguments,
+                span,
+            } => self.evaluate_call(callee, arguments, *span),
         }
     }
 
@@ -198,7 +386,7 @@ impl Interpreter {
     /// error is here so that an unchecked program is still reported, not
     /// a crash.
     fn evaluate_identifier(&self, name: &str, span: Span) -> Result<Value, RuntimeError> {
-        match self.environment.lookup(name) {
+        match self.lookup(name) {
             Some(value) => Ok(value.clone()),
             None => Err(RuntimeError::new(
                 RuntimeErrorKind::UndefinedVariable {
@@ -207,6 +395,31 @@ impl Interpreter {
                 span,
             )),
         }
+    }
+
+    /// A call: find the function in the global scope, evaluate the
+    /// arguments in the caller's frame, left to right, then call it.
+    fn evaluate_call(
+        &mut self,
+        callee: &str,
+        arguments: &[Expression],
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        let Some(function) = self.functions.get(callee).copied() else {
+            return Err(RuntimeError::new(
+                RuntimeErrorKind::UndefinedFunction {
+                    name: callee.to_string(),
+                },
+                span,
+            ));
+        };
+
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push(self.evaluate(argument)?);
+        }
+
+        self.call_function(function, values, span)
     }
 
     /// `name = value` stores the value in the existing variable and, as
@@ -219,7 +432,7 @@ impl Interpreter {
         span: Span,
     ) -> Result<Value, RuntimeError> {
         let value = self.evaluate(value)?;
-        if self.environment.assign(name, value.clone()) {
+        if self.assign(name, value.clone()) {
             Ok(value)
         } else {
             Err(RuntimeError::new(
