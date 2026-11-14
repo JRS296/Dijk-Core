@@ -1,7 +1,10 @@
 use std::fmt;
 
 /// A byte range `[start, end)` into the source text a token was read from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Hash` lets a span serve as a key: the type checker records the type
+/// of each expression in a table keyed by the expression's span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

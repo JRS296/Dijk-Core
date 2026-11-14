@@ -1,6 +1,7 @@
 //! Type errors: programs whose names all mean something, but whose
 //! operations are not valid for the kinds of value they are applied to.
 
+use super::ty::Type;
 use crate::diagnostics;
 use crate::lexer::token::Span;
 use std::fmt;
@@ -11,6 +12,10 @@ pub enum TypeErrorKind {
     /// A type annotation names a type Dijk does not have, such as
     /// `let x: banana = 1;`.
     UnknownType { name: String },
+    /// An integer literal whose value does not fit in the type it was
+    /// given, such as `3000000000` where an `i32` is expected. `value`
+    /// includes a minus sign written directly before the digits.
+    IntegerLiteralOutOfRange { value: i64, ty: Type },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +32,9 @@ impl TypeError {
     fn message(&self) -> String {
         match &self.kind {
             TypeErrorKind::UnknownType { name } => format!("unknown type `{name}`"),
+            TypeErrorKind::IntegerLiteralOutOfRange { value, ty } => {
+                format!("integer literal `{value}` is out of range for `{ty}`")
+            }
         }
     }
 
