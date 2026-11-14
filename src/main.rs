@@ -12,6 +12,10 @@ mod lexer;
 mod parser;
 mod pretty;
 mod semantic;
+// The type checker is built up over several commits before any command
+// uses it; `dijk check` and `dijk run` are wired to it once it is complete.
+#[allow(dead_code)]
+mod types;
 
 use interpreter::value::Value;
 
