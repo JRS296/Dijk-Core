@@ -20,5 +20,6 @@
 //! what that computation produced. AST nodes are source; evaluating them
 //! produces runtime values (`value.rs`).
 
+pub mod environment;
 pub mod error;
 pub mod value;
