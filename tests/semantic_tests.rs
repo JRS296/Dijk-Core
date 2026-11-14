@@ -13,6 +13,9 @@
 // hence the `allow`.
 #[path = "../src/ast/mod.rs"]
 mod ast;
+// Only the type checker renders with notes, so that part of the shared
+// renderer goes unused here.
+#[allow(dead_code)]
 #[path = "../src/diagnostics.rs"]
 mod diagnostics;
 #[allow(dead_code)]

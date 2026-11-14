@@ -4,6 +4,9 @@
 // Neither module is part of a library's public surface (dijk is a binary
 // crate), so these tests include them directly by path, mirroring their
 // layout as siblings under the crate root in src/main.rs.
+// Only the type checker renders with notes, so that part of the shared
+// renderer goes unused here.
+#[allow(dead_code)]
 #[path = "../src/diagnostics.rs"]
 mod diagnostics;
 #[path = "../src/lexer/mod.rs"]

@@ -6,6 +6,9 @@
 // their layout as siblings under the crate root in src/main.rs.
 #[path = "../src/ast/mod.rs"]
 mod ast;
+// Only the type checker renders with notes, so that part of the shared
+// renderer goes unused here.
+#[allow(dead_code)]
 #[path = "../src/diagnostics.rs"]
 mod diagnostics;
 #[path = "../src/lexer/mod.rs"]

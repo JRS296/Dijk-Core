@@ -131,9 +131,10 @@ fn check_fails_with_exit_1_on_a_type_error() {
         stdout_of(&output),
         "Checking examples/type_error.dk...\nLexical analysis       OK\nParsing                OK\nSemantic analysis      OK\nType checking          FAILED (1 error)\n"
     );
-    let stderr = stderr_of(&output);
-    assert!(stderr.starts_with("type error: mismatched types: expected `i32`, found `string`\n"));
-    assert!(stderr.contains(" --> examples/type_error.dk:2:18"));
+    assert_eq!(
+        stderr_of(&output),
+        "type error[E0001]: type mismatch\n --> examples/type_error.dk:2:18\n  |\n2 |     let x: i32 = \"hello\";\n  |                  ^^^^^^^\n  = expected `i32`\n  = found `string`\n"
+    );
 }
 
 #[test]
@@ -178,7 +179,10 @@ fn check_reports_every_type_error() {
     let output = run(&["check", &path]);
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout_of(&output).ends_with("Type checking          FAILED (2 errors)\n"));
-    assert_eq!(stderr_of(&output).matches("type error:").count(), 2);
+    let stderr = stderr_of(&output);
+    assert_eq!(stderr.matches("type error[").count(), 2);
+    assert!(stderr.starts_with("type error[E0001]: type mismatch\n"));
+    assert!(stderr.contains("type error[E0002]: invalid binary operation: `+`\n"));
 }
 
 #[test]
@@ -243,8 +247,7 @@ fn run_rejects_a_type_error_before_executing_anything() {
     let output = run(&["run", "examples/type_error.dk"]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(stdout_of(&output), "");
-    assert!(stderr_of(&output)
-        .starts_with("type error: mismatched types: expected `i32`, found `string`\n"));
+    assert!(stderr_of(&output).starts_with("type error[E0001]: type mismatch\n"));
 }
 
 #[test]
@@ -257,7 +260,7 @@ fn run_does_not_execute_a_program_with_a_type_error_anywhere() {
     );
     assert_eq!(output.status.code(), Some(1));
     let stderr = stderr_of(&output);
-    assert!(stderr.starts_with("type error:"));
+    assert!(stderr.starts_with("type error[E0001]:"));
     assert!(!stderr.contains("runtime error"));
 }
 

@@ -222,9 +222,9 @@ fn type_errors_render_with_their_own_label() {
     let source = "let x: banana = 1;";
     let error = ty::resolve(&annotation("banana")).unwrap_err();
     let rendered = error.render("example.dk", source);
-    assert!(rendered.starts_with("type error: unknown type `banana`\n"));
+    assert!(rendered.starts_with("type error[E0008]: unknown type name `banana`\n"));
     assert!(rendered.contains(" --> example.dk:1:8"));
-    assert_eq!(error.to_string(), "unknown type `banana`");
+    assert_eq!(error.to_string(), "unknown type name `banana`");
 }
 
 // --- literals ---
@@ -363,8 +363,7 @@ fn every_out_of_range_literal_is_reported_in_source_order() {
 fn range_errors_render_as_type_errors() {
     let source = in_main("let x = 3000000000;");
     let rendered = type_errors(&source)[0].render("example.dk", &source);
-    assert!(rendered
-        .starts_with("type error: integer literal `3000000000` is out of range for `i32`\n"));
+    assert!(rendered.starts_with("type error[E0010]: integer literal out of range\n"));
     assert!(rendered.contains(" --> example.dk:2:9"));
 }
 
@@ -1541,4 +1540,147 @@ fn an_unknown_return_type_is_not_also_a_missing_return() {
             name: "number".to_string()
         }]
     );
+}
+
+// --- diagnostics ---
+
+/// The first type error in `source`, rendered as `dijk check` would show
+/// it for a file called `main.dk`.
+fn rendered(source: &str) -> String {
+    type_errors(source)[0].render("main.dk", source)
+}
+
+#[test]
+fn every_rule_has_its_own_stable_code() {
+    let cases = [
+        ("E0001", "fn main() {\n    let x: i32 = true;\n}\n"),
+        ("E0002", "fn main() {\n    let x = 1 + true;\n}\n"),
+        ("E0003", "fn main() {\n    let x = -true;\n}\n"),
+        ("E0004", "fn f(n: i32) {}\n\nfn main() {\n    f(true);\n}\n"),
+        (
+            "E0005",
+            "fn f() -> i32 {\n    return true;\n}\n\nfn main() {}\n",
+        ),
+        ("E0006", "fn main() {\n    if 1 {\n    }\n}\n"),
+        (
+            "E0007",
+            "fn main() {\n    let mut x = 1;\n    x = true;\n}\n",
+        ),
+        ("E0008", "fn main() {\n    let x: float = 1;\n}\n"),
+        (
+            "E0009",
+            "fn f() -> i32 {\n    let x = 1;\n}\n\nfn main() {}\n",
+        ),
+        ("E0010", "fn main() {\n    let x = 3000000000;\n}\n"),
+    ];
+    for (code, source) in cases {
+        let errors = type_errors(source);
+        assert_eq!(errors.len(), 1, "{code}: {errors:?}");
+        assert_eq!(errors[0].code(), code);
+        assert!(rendered(source).starts_with(&format!("type error[{code}]: ")));
+    }
+}
+
+#[test]
+fn a_type_mismatch_renders_with_the_expression_underlined_and_both_types() {
+    // The milestone's own example, character for character.
+    assert_eq!(
+        rendered("fn main() -> i32 {\n    let x: i32 = \"hello\";\n    return x;\n}\n"),
+        "type error[E0001]: type mismatch
+ --> main.dk:2:18
+  |
+2 |     let x: i32 = \"hello\";
+  |                  ^^^^^^^
+  = expected `i32`
+  = found `string`
+"
+    );
+}
+
+#[test]
+fn an_invalid_operation_lists_what_the_operator_accepts() {
+    assert_eq!(
+        rendered("fn main() {\n    let x = 10 + \"hello\";\n}\n"),
+        "type error[E0002]: invalid binary operation: `+`
+ --> main.dk:2:13
+  |
+2 |     let x = 10 + \"hello\";
+  |             ^^^^^^^^^^^^
+  = expected `i32 + i32`, `i64 + i64` or `string + string`
+  = found `i32 + string`
+"
+    );
+    assert!(rendered("fn main() {\n    let x = !1;\n}\n")
+        .ends_with("  = expected `!bool`\n  = found `!i32`\n"));
+}
+
+#[test]
+fn an_invalid_argument_names_the_parameter() {
+    let source = "fn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n\nfn main() {\n    add(10, \"hello\");\n}\n";
+    assert!(rendered(source).ends_with(
+        "  = expected `i32`\n  = found `string`\n  = note: argument 2 of `add` is its parameter `b: i32`\n"
+    ));
+}
+
+#[test]
+fn a_return_error_says_what_the_function_declared() {
+    assert!(
+        rendered("fn log() {\n    return 1;\n}\n\nfn main() {}\n").ends_with(
+            "  = expected `unit`\n  = found `i32`\n  = note: `log` has no `-> T`, so it returns `unit`: no value at all\n"
+        )
+    );
+}
+
+#[test]
+fn a_missing_return_points_at_the_closing_brace() {
+    assert_eq!(
+        rendered("fn get_number() -> i32 {\n    if true {\n        return 10;\n    }\n}\n\nfn main() {}\n"),
+        "type error[E0009]: missing return in `get_number`
+ --> main.dk:5:1
+  |
+5 | }
+  | ^
+  = expected `i32`
+  = found the end of `get_number`, with no `return`
+  = note: a `return` inside an `if` without `else`, or inside a `while`, might never run
+"
+    );
+}
+
+#[test]
+fn an_out_of_range_literal_shows_the_range() {
+    assert!(rendered("fn main() {\n    let x = -2147483649;\n}\n").ends_with(
+        "  |             ^^^^^^^^^^^\n  = expected `i32`\n  = found `-2147483649`\n  = note: `i32` holds -2147483648 to 2147483647\n"
+    ));
+}
+
+#[test]
+fn an_unknown_type_lists_the_types_that_exist() {
+    assert!(rendered("fn f() -> unit {}\n\nfn main() {}\n").ends_with(
+        "  = note: the types that can be written are `i32`, `i64`, `bool` and `string`\n  = note: `unit` cannot be written; leave out `-> T` for a function that returns nothing\n"
+    ));
+}
+
+#[test]
+fn the_underline_stops_at_the_end_of_the_first_line() {
+    // An argument list that spans two lines: only the first is shown.
+    let source = "fn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n\nfn main() {\n    let s: string = add(1,\n        2);\n}\n";
+    assert!(rendered(source)
+        .contains("6 |     let s: string = add(1,\n  |                     ^^^^^^\n"));
+}
+
+#[test]
+fn the_gutter_grows_with_the_line_number() {
+    let source = format!("fn main() {{\n{}    let x: bool = 1;\n}}\n", "\n".repeat(9));
+    let text = rendered(&source);
+    assert!(text.contains("  --> main.dk:11:19\n   |\n11 |     let x: bool = 1;\n   |                   ^\n   = expected `bool`\n"));
+}
+
+#[test]
+fn other_stages_keep_their_single_caret() {
+    // Only type errors underline a whole span; the renderer the other
+    // stages use is unchanged.
+    let source = "let x = abc;";
+    let plain = diagnostics::render("a.dk", source, Span::new(8, 11), "error", "oops");
+    assert!(plain.ends_with("1 | let x = abc;\n  |         ^\n"));
 }
