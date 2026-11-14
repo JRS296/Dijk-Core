@@ -15,10 +15,10 @@ mod semantic;
 
 use interpreter::value::Value;
 
-const VERSION: &str = "0.0.3";
+const VERSION: &str = "0.0.4";
 
 const HELP: &str = "\
-Dijk 0.0.3
+Dijk 0.0.4
 
 Dijk Core is building its compiler one stage at a time. See docs/ for the
 philosophy, design constraints, architecture, and roadmap.

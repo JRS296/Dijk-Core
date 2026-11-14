@@ -26,16 +26,30 @@ Phase 16 — Self-hosting
 
 ## Current phase
 
-**Phase 3 — AST.** Phase 0 (language design) produced the charter in
-[philosophy.md](philosophy.md), [language.md](language.md), and
-[architecture.md](architecture.md). Phase 1 implemented lexical analysis
-per [lexer.md](lexer.md): `dijk lex <file>` turns source text into a
-token stream. Phase 2 implemented parsing per [parser.md](parser.md).
-Phase 3 formalizes the parser's output into Dijk's actual AST per
-[ast.md](ast.md): the parser now constructs AST nodes directly, `dijk
-parse`/`dijk ast <file>` expose it, and a `Visitor`-based traversal
-(`src/ast/visit.rs`) exists for later passes to build on. There is no
-semantic analysis, type checking, or execution yet.
+**Phase 4 — Interpreter** (`dijk-0.0.4`). Phase 0 (language design)
+produced the charter in [philosophy.md](philosophy.md),
+[language.md](language.md), and [architecture.md](architecture.md).
+Phase 1 implemented lexical analysis per [lexer.md](lexer.md): `dijk lex
+<file>` turns source text into a token stream. Phase 2 implemented
+parsing per [parser.md](parser.md). Phase 3 formalized the parser's
+output into Dijk's actual AST per [ast.md](ast.md), exposed by `dijk
+parse`/`dijk ast <file>`, with a `Visitor`-based traversal
+(`src/ast/visit.rs`) for later passes to build on.
+
+Phase 4 makes Dijk executable: `dijk run <file>` runs a program on a
+tree-walking interpreter per [interpreter.md](interpreter.md), with
+runtime values, environments, call frames, return propagation, recursion,
+and runtime errors. The list above has no separate phase for it, but
+Phase 4 also introduced the first, deliberately small, **semantic
+analysis** per [semantic.md](semantic.md). It covers name resolution,
+lexical scopes, and function resolution, so that no program with an
+unknown name is ever run. Semantic analysis does not check types yet.
+Making it formal, and adding the static type checker, is the work of
+Phase 5. There is no type checking, IR, or compilation yet.
+
+Versions and phases do not line up one-to-one. Each `dijk-0.0.x`
+release is a milestone that may span part of a phase, or (like `0.0.4`)
+parts of two.
 
 ## Correspondence with `dijkstra-book`
 

@@ -1,6 +1,6 @@
 # Dijk Core
 
-**Dijk 0.0.3** — experimental / educational development release. Grammar,
+**Dijk 0.0.4** — experimental / educational development release. Grammar,
 ABI, standard library, compiler compatibility, and runtime behavior are
 all still unstable. See [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,18 +27,22 @@ implementation teaches how a language and its compiler are actually built.
 ✓ Lexical analysis (dijk lex, .dk and .dijk source files)
 ✓ Parsing (dijk parse)
 ✓ AST (dijk ast)
-□ Semantic analysis
+✓ Semantic analysis: name resolution and lexical scopes
+✓ Interpretation (dijk run): a tree-walking interpreter
 □ Type checking
-□ Interpretation
 □ Intermediate representation
 □ Native compilation
 ```
 
-`0.0.3` is intentionally incomplete — there is no semantic analysis, type
-checking, or execution yet; the AST only represents what was written, not
-whether it means anything (see [docs/ast.md](docs/ast.md)). See
-[docs/](docs/) for the philosophy, design constraints, architecture, and
-roadmap that govern implementation.
+`0.0.4` is the first version in which Dijk programs *run*: `dijk run`
+takes a program through every stage (lex → parse → semantic analysis →
+interpret) and prints the value `main` returns. It is still
+intentionally small. Semantic analysis resolves names and scopes but does
+not check types (see [docs/semantic.md](docs/semantic.md)), so a mistake
+like `1 + true` is found only at run time (see
+[docs/interpreter.md](docs/interpreter.md)). There is no `print` yet, and
+no compiler. See [docs/](docs/) for the philosophy, design constraints,
+architecture, and roadmap that govern implementation.
 
 ## Project trajectory
 
@@ -48,6 +52,8 @@ Language
 Lexer
   ↓
 Parser
+  ↓
+Semantic Analysis
   ↓
 Interpreter
   ↓
@@ -94,6 +100,7 @@ cargo run -- doctor
 cargo run -- lex examples/hello.dk
 cargo run -- parse examples/hello.dk
 cargo run -- ast examples/hello.dk
+cargo run -- run examples/factorial.dk
 cargo test
 ```
 
@@ -110,6 +117,8 @@ cargo build --release
 ```
 
 ## Example
+
+For a file `hello.dk` containing `fn main() { let x: i32 = 42; }`:
 
 ```text
 dijk lex hello.dk
@@ -162,6 +171,51 @@ Program
 
 ```text
 1 function(s), 3 statement(s), 5 expression(s)
+```
+
+`dijk run` executes a program and prints the value its `main` returns:
+
+```text
+dijk run examples/factorial.dk
+```
+
+```dijk
+fn factorial(n: i32) -> i32 {
+    if n <= 1 {
+        return 1;
+    }
+
+    return n * factorial(n - 1);
+}
+
+fn main() {
+    return factorial(5);
+}
+```
+
+```text
+120
+```
+
+A program that is well-formed but meaningless is rejected before it
+runs, and a problem that only appears while running is reported with the
+call stack at that moment:
+
+```text
+$ dijk run examples/semantic_error.dk
+semantic error: unknown identifier `y`
+ --> examples/semantic_error.dk:8:12
+  |
+8 |     return y;
+  |            ^
+
+$ dijk run examples/runtime_error.dk
+runtime error: division by zero
+ --> examples/runtime_error.dk:2:16
+  |
+2 |     return a / b;
+  |                ^
+note: call stack: divide ← main
 ```
 
 There is no `dijk compile` yet.
