@@ -100,6 +100,13 @@
 //! itself. Each body is then checked with its parameters already in the
 //! function scope of Γ, with the types their annotations name.
 //!
+//! A call is checked against the callee's signature alone: each argument
+//! must have its parameter's type (which is also what an integer literal
+//! argument is expected to be), and the call expression has the callee's
+//! return type. Whether the function exists, and whether the call passes
+//! the right *number* of arguments, are questions about names that
+//! semantic analysis has already answered.
+//!
 //! # Assignments
 //!
 //! `x = value` stores a new value in an existing variable, so the value
@@ -120,12 +127,14 @@ use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use crate::ast::statement::Statement;
 use crate::ast::types::Type as TypeAnnotation;
 use crate::lexer::token::Span;
+use std::collections::HashMap;
 
 /// Check every function in `program`, returning what was learned about
 /// it, or every type error found, in source order.
 pub fn check_program(program: &Program) -> Result<TypedProgram, Vec<TypeError>> {
     let mut checker = Checker {
         typed: TypedProgram::default(),
+        signatures: HashMap::new(),
         env: TypeEnvironment::new(),
         bindings: Vec::new(),
         errors: Vec::new(),
@@ -159,6 +168,11 @@ pub fn check_program(program: &Program) -> Result<TypedProgram, Vec<TypeError>> 
 struct Checker {
     /// What has been learned so far: grows as the walk proceeds.
     typed: TypedProgram,
+    /// Every function's signature, by name, collected before any body is
+    /// checked. If two functions share a name (a semantic error), the
+    /// first one is the one calls are checked against, as in semantic
+    /// analysis.
+    signatures: HashMap<String, FunctionSignature>,
     /// Γ: the type of every variable visible at the current point of the
     /// function being checked.
     env: TypeEnvironment,
@@ -174,9 +188,10 @@ impl Checker {
 
     // --- functions and statements ---
 
-    /// Work out `function`'s signature from its annotations. An unknown
-    /// type name is reported here, once, and stands for `Type::Error`
-    /// from then on.
+    /// Work out `function`'s signature from its annotations, and record it
+    /// under the function's name for calls to be checked against. An
+    /// unknown type name is reported here, once, and stands for
+    /// `Type::Error` from then on.
     fn collect_signature(&mut self, function: &Function) -> FunctionSignature {
         let params = function
             .params
@@ -190,10 +205,14 @@ impl Checker {
             None => Type::Unit,
         };
 
-        FunctionSignature {
+        let signature = FunctionSignature {
             params,
             return_type,
-        }
+        };
+        self.signatures
+            .entry(function.name.clone())
+            .or_insert_with(|| signature.clone());
+        signature
     }
 
     /// The type an annotation names, reporting an unknown name.
@@ -357,8 +376,6 @@ impl Checker {
             Expression::Unary {
                 operator, operand, ..
             } => self.check_unary(expr, *operator, operand, expected),
-            // Typing calls needs rules this checker does not have yet.
-            // Until it does, a call is left untyped.
             Expression::Binary {
                 left,
                 operator,
@@ -370,7 +387,9 @@ impl Checker {
             // that skipped analysis, an unknown name is simply untyped.)
             Expression::Identifier(name, _) => self.env.lookup(name).unwrap_or(Type::Error),
             Expression::Assign { name, value, .. } => self.check_assignment(name, value),
-            Expression::Call { .. } => Type::Error,
+            Expression::Call {
+                callee, arguments, ..
+            } => self.check_call(callee, arguments),
         };
         self.record(expr.span(), ty);
         ty
@@ -398,6 +417,44 @@ impl Checker {
             );
         }
         declared
+    }
+
+    /// `callee(arguments)`: each argument is checked against its
+    /// parameter's type, and the call has the callee's return type.
+    fn check_call(&mut self, callee: &str, arguments: &[Expression]) -> Type {
+        let Some(signature) = self.signatures.get(callee).cloned() else {
+            // Unresolved: semantic analysis reports that, not the checker.
+            for argument in arguments {
+                self.check_expression(argument, None);
+            }
+            return Type::Error;
+        };
+
+        for (index, argument) in arguments.iter().enumerate() {
+            // Semantic analysis has checked the argument count. An extra
+            // argument can only come from a program that skipped it, and
+            // is checked on its own.
+            let Some((parameter, expected)) = signature.params.get(index) else {
+                self.check_expression(argument, None);
+                continue;
+            };
+
+            let found = self.check_expression(argument, Some(*expected));
+            if !Type::compatible(*expected, found) {
+                self.error(
+                    TypeErrorKind::InvalidArgument {
+                        function: callee.to_string(),
+                        parameter: parameter.clone(),
+                        position: index + 1,
+                        expected: *expected,
+                        found,
+                    },
+                    argument.span(),
+                );
+            }
+        }
+
+        signature.return_type
     }
 
     /// Record `ty` as the type of the expression at `span`. `Error` is

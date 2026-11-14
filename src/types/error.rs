@@ -27,6 +27,16 @@ pub enum TypeErrorKind {
     /// given, such as `3000000000` where an `i32` is expected. `value`
     /// includes a minus sign written directly before the digits.
     IntegerLiteralOutOfRange { value: i64, ty: Type },
+    /// A call passes an argument whose type is not its parameter's, such
+    /// as `add(10, "hello")` for `fn add(a: i32, b: i32)`. `position`
+    /// counts from 1.
+    InvalidArgument {
+        function: String,
+        parameter: String,
+        position: usize,
+        expected: Type,
+        found: Type,
+    },
     /// A binary operator applied to operand types it has no rule for, such
     /// as `10 + "hello"` or `1 < true` (see `rules.rs`).
     InvalidBinaryOperation {
@@ -69,6 +79,15 @@ impl TypeError {
             TypeErrorKind::IntegerLiteralOutOfRange { value, ty } => {
                 format!("integer literal `{value}` is out of range for `{ty}`")
             }
+            TypeErrorKind::InvalidArgument {
+                function,
+                parameter,
+                position,
+                expected,
+                found,
+            } => format!(
+                "argument {position} of `{function}` (`{parameter}`) has type `{found}`, but `{function}` expects `{expected}`"
+            ),
             TypeErrorKind::InvalidBinaryOperation {
                 operator,
                 left,

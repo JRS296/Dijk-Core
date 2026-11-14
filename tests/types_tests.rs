@@ -1122,3 +1122,139 @@ fn duplicate_functions_are_a_semantic_error_not_a_type_error() {
         }]
     );
 }
+
+// --- function calls ---
+
+fn invalid_argument(
+    function: &str,
+    parameter: &str,
+    position: usize,
+    expected: Type,
+    found: Type,
+) -> TypeErrorKind {
+    TypeErrorKind::InvalidArgument {
+        function: function.to_string(),
+        parameter: parameter.to_string(),
+        position,
+        expected,
+        found,
+    }
+}
+
+#[test]
+fn a_call_has_the_callees_return_type() {
+    let source = format!("{ADD}\nfn main() {{\n    let sum = add(10, 20);\n}}\n");
+    assert_eq!(type_at(&source, "add(10, 20)"), Some(Type::I32));
+    assert_eq!(
+        bindings_of_main(&source),
+        vec![binding("sum", Type::I32, 0)]
+    );
+}
+
+#[test]
+fn a_literal_argument_takes_its_parameters_type() {
+    let source = "fn grow(n: i64) -> i64 {\n    return n + 1;\n}\n\nfn main() {\n    let big = grow(3000000000);\n}\n";
+    assert_eq!(type_at(source, "3000000000"), Some(Type::I64));
+    assert_eq!(type_at(source, "grow(3000000000)"), Some(Type::I64));
+}
+
+#[test]
+fn an_argument_of_the_wrong_type_is_rejected() {
+    let source = format!("{ADD}\nfn main() {{\n    add(10, \"hello\");\n}}\n");
+    let errors = type_errors(&source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].kind,
+        invalid_argument("add", "b", 2, Type::I32, Type::String)
+    );
+    // Reported at the argument itself.
+    assert_eq!(errors[0].span, span_of(&source, "\"hello\""));
+}
+
+#[test]
+fn every_wrong_argument_is_reported() {
+    assert_eq!(
+        error_kinds(&format!(
+            "{ADD}\nfn main() {{\n    add(true, \"hello\");\n}}\n"
+        )),
+        vec![
+            invalid_argument("add", "a", 1, Type::I32, Type::Bool),
+            invalid_argument("add", "b", 2, Type::I32, Type::String),
+        ]
+    );
+}
+
+#[test]
+fn an_i32_argument_is_not_an_i64() {
+    assert_eq!(
+        error_kinds("fn wide(n: i64) {}\n\nfn main() {\n    let small = 1;\n    wide(small);\n}\n"),
+        vec![invalid_argument("wide", "n", 1, Type::I64, Type::I32)]
+    );
+}
+
+#[test]
+fn a_call_result_is_used_at_its_return_type() {
+    assert_eq!(
+        error_kinds(&format!(
+            "{ADD}\nfn main() {{\n    let x = add(1, 2) + true;\n}}\n"
+        )),
+        vec![invalid_binary(BinaryOperator::Add, Type::I32, Type::Bool)]
+    );
+}
+
+#[test]
+fn a_call_to_a_function_without_a_return_type_is_unit() {
+    let source =
+        "fn nothing() {}\n\nfn main() {\n    let u = nothing();\n    let x = nothing() + 1;\n}\n";
+    assert_eq!(
+        error_kinds(source),
+        vec![invalid_binary(BinaryOperator::Add, Type::Unit, Type::I32)]
+    );
+}
+
+#[test]
+fn a_function_may_be_called_before_it_is_declared() {
+    let source = "fn main() {\n    let even = is_even(4);\n}\n\nfn is_even(n: i32) -> bool {\n    return n / 2 * 2 == n;\n}\n";
+    assert_eq!(type_at(source, "is_even(4)"), Some(Type::Bool));
+}
+
+#[test]
+fn a_recursive_call_is_checked_against_the_functions_own_signature() {
+    let source = "fn factorial(n: i32) -> i32 {\n    if n <= 1 {\n        return 1;\n    }\n    return n * factorial(n - 1);\n}\n\nfn main() {}\n";
+    assert_eq!(type_at(source, "n * factorial(n - 1)"), Some(Type::I32));
+}
+
+#[test]
+fn calls_nest() {
+    let source = format!("{ADD}\nfn main() {{\n    let x = add(add(1, 2), add(3, 4));\n}}\n");
+    assert_eq!(
+        type_at(&source, "add(add(1, 2), add(3, 4))"),
+        Some(Type::I32)
+    );
+}
+
+#[test]
+fn unknown_functions_and_wrong_argument_counts_are_still_semantic_errors() {
+    // Existence and arity are questions about names, answered by semantic
+    // analysis before the checker runs. The checker does not ask them
+    // again: handed the program anyway, it finds no type errors in it.
+    let source = format!("{ADD}\nfn main() {{\n    add(10);\n    unknown_function();\n}}\n");
+    let program = parse_syntax(&source);
+    assert_eq!(
+        semantic::analyze(&program)
+            .into_iter()
+            .map(|e| e.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            semantic::error::SemanticErrorKind::ArityMismatch {
+                name: "add".to_string(),
+                expected: 2,
+                found: 1,
+            },
+            semantic::error::SemanticErrorKind::UnknownFunction {
+                name: "unknown_function".to_string()
+            },
+        ]
+    );
+    assert!(types::check(&program).is_ok());
+}
