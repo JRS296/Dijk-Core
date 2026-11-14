@@ -1,0 +1,7 @@
+fn divide(a: i32, b: i32) -> i32 {
+    return a / b;
+}
+
+fn main() {
+    return divide(10, 0);
+}

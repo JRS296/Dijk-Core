@@ -1,24 +1,19 @@
 //! Dijk Core CLI.
 //!
-//! There is no compiler yet — only lexical analysis, parsing, and the
-//! AST. This binary is the entry point for observing each compiler stage
-//! as it is built.
+//! There is no compiler yet. Dijk Core can lex, parse and build an AST,
+//! check what names refer to (semantic analysis), and run a program with
+//! a tree-walking interpreter. This binary is the entry point for
+//! observing each of those stages as it is built.
 
 mod ast;
 mod diagnostics;
-// No command runs the interpreter yet, so nothing in the binary reaches
-// this module and the compiler would (rightly) report all of it as
-// unused. The allow lasts only until a command calls it.
-#[allow(dead_code)]
 mod interpreter;
 mod lexer;
 mod parser;
 mod pretty;
-// No command runs semantic analysis yet, so nothing in the binary reaches
-// this module and the compiler would (rightly) report all of it as
-// unused. The allow lasts only until a command calls it.
-#[allow(dead_code)]
 mod semantic;
+
+use interpreter::value::Value;
 
 const VERSION: &str = "0.0.3";
 
@@ -38,6 +33,7 @@ COMMANDS:
     lex <file>   Print the token stream for a Dijk source file (.dk or .dijk)
     parse <file> Print the AST for a Dijk source file (.dk or .dijk)
     ast <file>   Print the AST plus node counts, for the same file
+    run <file>   Run a Dijk program and print the value its main returns
 ";
 
 fn main() {
@@ -71,6 +67,14 @@ fn main() {
             };
             ast(&path);
         }
+        Some("run") => {
+            let Some(path) = args.next() else {
+                eprintln!("dijk: 'run' requires a file argument");
+                eprintln!("usage: dijk run <file>");
+                std::process::exit(1);
+            };
+            run(&path);
+        }
         Some(other) => {
             eprintln!("dijk: unrecognized argument '{other}'");
             eprintln!("run 'dijk --help' for usage");
@@ -82,8 +86,10 @@ fn main() {
 fn doctor() {
     println!("Dijk toolchain");
     println!("Version: {VERSION}");
-    println!("Status: Bootstrap development (lexer and parser implemented)");
-    println!("Compiler: Not yet implemented");
+    println!(
+        "Status: Bootstrap development (lexer, parser, AST, semantic analysis, and interpreter implemented)"
+    );
+    println!("Compiler: Not yet implemented (programs run on the interpreter: dijk run)");
 }
 
 /// File extensions recognized as Dijk source. `.dk` is the short form for
@@ -182,6 +188,57 @@ fn ast(path: &str) {
             eprint!("{}", error.render(path, &source));
         }
         std::process::exit(1);
+    }
+}
+
+/// Run a program through every stage in turn:
+///
+/// ```text
+/// lex → parse → semantic analysis → interpret
+/// ```
+///
+/// Each stage runs only if every stage before it succeeded. A program
+/// with lexical or parse errors is never analyzed (its AST would be
+/// partial), and a program with semantic errors is never executed. On
+/// success, the value `main` returns is printed on its own line (nothing
+/// is printed if it returns no value) and the exit code is 0. Any error,
+/// from any stage, exits with 1.
+fn run(path: &str) {
+    let source = read_source_file(path);
+    let (tokens, lex_errors) = lexer::tokenize(&source);
+
+    if !lex_errors.is_empty() {
+        for error in &lex_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+
+    let (program, parse_errors) = parser::parse(tokens);
+
+    if !parse_errors.is_empty() {
+        for error in &parse_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+
+    let semantic_errors = semantic::analyze(&program);
+
+    if !semantic_errors.is_empty() {
+        for error in &semantic_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+
+    match interpreter::run(&program) {
+        Ok(Value::Unit) => {}
+        Ok(value) => println!("{value}"),
+        Err(error) => {
+            eprint!("{}", error.render(path, &source));
+            std::process::exit(1);
+        }
     }
 }
 

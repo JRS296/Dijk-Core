@@ -1,0 +1,9 @@
+fn main() {
+    let x = 10;
+
+    if x > 5 {
+        let y = x * 2;
+    }
+
+    return y;
+}
