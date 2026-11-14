@@ -19,6 +19,8 @@
 //! The left side is a description of a computation. The right side is
 //! what that computation produced. AST nodes are source; evaluating them
 //! produces runtime values (`value.rs`).
+//!
+//! See `docs/interpreter.md` for the execution model as a whole.
 
 pub mod environment;
 pub mod error;

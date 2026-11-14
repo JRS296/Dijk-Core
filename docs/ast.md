@@ -20,8 +20,10 @@ let x: i32 = "hello";
 is syntactically a `Let` binding a string literal to a variable annotated
 `i32`. The AST represents exactly that, without complaint — nothing has
 checked that a string can be assigned where an `i32` was declared. That
-check belongs to semantic analysis, a later milestone. Keeping this
-boundary explicit is why the compiler's pipeline stays:
+check belongs to a later stage: not semantic analysis as it exists today,
+which resolves names only (`docs/semantic.md`), but the type checker
+still to come. Keeping this boundary explicit is why the compiler's
+pipeline stays:
 
 ```text
 Parser
@@ -223,7 +225,10 @@ This is deliberately not an elaborate visitor framework (no generic
 return values, no fold/map variants) — just enough for semantic analysis,
 type checking, and later passes to share one walking mechanism instead of
 each writing its own recursive match. `dijk ast`'s node-count summary
-(`crate::pretty::NodeCounts`) is the first real consumer.
+(`crate::pretty::NodeCounts`) is the first real consumer. Semantic
+analysis's resolver (`docs/semantic.md`) is the second. The interpreter
+deliberately is not a consumer: evaluating a node must *produce a value*,
+which a visitor with no return values cannot do (`docs/interpreter.md`).
 
 ## Invariants
 
@@ -240,9 +245,11 @@ things the Rust type system enforces on their own:
   input — a construct that fails to parse produces a `ParseError`
   instead, never a partially-valid node standing in for it.
 
-## What's next
+## What the AST does not know
 
 The AST doesn't know what `x` refers to, whether types agree, or what a
-program *does*. Those questions — name resolution, type checking, and
-execution — are semantic analysis and the interpreter, not yet built.
-`docs/roadmap.md` has the current plan.
+program *does*. Later stages answer those questions, each reading the
+AST without changing it. Semantic analysis resolves what names refer to
+(`docs/semantic.md`), and the interpreter executes the program
+(`docs/interpreter.md`). Whether types agree is for the type checker,
+still to come; `docs/roadmap.md` has the current plan.

@@ -29,6 +29,7 @@
 //! In Dijk 0.0.4 this stage is deliberately small. It resolves names and
 //! nothing else. It is **not** a type checker: `let x: i32 = "hello";` is
 //! still accepted here, because checking types is a later milestone.
+//! See `docs/semantic.md`.
 
 pub mod error;
 mod resolve;

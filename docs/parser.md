@@ -12,8 +12,8 @@ The parser answers one question:
 The lexer already answered "what are the pieces" (`docs/lexer.md`). The
 parser determines whether a token sequence conforms to Dijk's grammar and
 constructs Dijk's AST (`docs/ast.md`) directly from it. It does not decide
-what that structure *means* — that is semantic analysis's job, still to
-come.
+what that structure *means* — that is semantic analysis's job
+(`docs/semantic.md`).
 
 ```text
 Tokens

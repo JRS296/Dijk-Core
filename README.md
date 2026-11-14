@@ -72,11 +72,13 @@ Self-hosting
 
 - [docs/philosophy.md](docs/philosophy.md) — the core educational principle
 - [docs/language.md](docs/language.md) — initial design constraints and feature boundary
-- [docs/architecture.md](docs/architecture.md) — intended compiler architecture
+- [docs/architecture.md](docs/architecture.md) — compiler architecture: the pipeline, what exists, what's planned
 - [docs/roadmap.md](docs/roadmap.md) — provisional implementation phases
 - [docs/lexer.md](docs/lexer.md) — lexical grammar implemented by `dijk lex`
 - [docs/parser.md](docs/parser.md) — grammar and parsing strategy implemented by `dijk parse`
 - [docs/ast.md](docs/ast.md) — the AST shape, parse-tree-vs-AST, invariants, and traversal
+- [docs/semantic.md](docs/semantic.md) — semantic analysis: name resolution, lexical scopes, and semantic errors
+- [docs/interpreter.md](docs/interpreter.md) — the execution model: values, environments, call frames, return propagation, runtime errors, and `dijk run`
 - [docs/testing.md](docs/testing.md) — automated tests and manual CLI testing
 - [CHANGELOG.md](CHANGELOG.md) — what shipped in each release
 
