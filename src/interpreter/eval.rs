@@ -80,6 +80,40 @@
 //! overflow". (The interpreter runs on a thread whose Rust stack is sized
 //! to hold that many calls with room to spare; see `STACK_SIZE` in
 //! `mod.rs`.)
+//!
+//! # Return propagation
+//!
+//! `return` may sit several blocks deep inside a function, but it ends
+//! the whole *call*, not just its own block. Every statement between
+//! the `return` and the end of the function must be skipped:
+//!
+//! ```text
+//! fn find() -> i32 {
+//!     while true {
+//!         if found() {
+//!             return 10;     → Return(10)
+//!             log();         skipped: the block stops at a Return
+//!         }                  if:    passes Return(10) outward
+//!         step();            skipped
+//!     }                      while: stops looping, passes it outward
+//!     cleanup();             skipped
+//! }                          call:  Return(10) becomes the call's value
+//! ```
+//!
+//! So executing a statement reports *how it finished*, as an
+//! [`Execution`]: normally (carry on with the next statement), or by
+//! returning a value (stop, and tell the enclosing statement to stop
+//! too). Together with `Err(RuntimeError)` for a failure, every
+//! statement ends in exactly one of three ways:
+//!
+//! ```text
+//! Ok(Execution::Normal)          next statement, please
+//! Ok(Execution::Return(value))   unwind to the function call
+//! Err(RuntimeError)              unwind all the way out and report
+//! ```
+//!
+//! Blocks and loops pass a `Return` outward untouched. Only a function
+//! call consumes it, turning it into the value of the call expression.
 
 use super::environment::Environment;
 use super::error::{RuntimeError, RuntimeErrorKind};
@@ -92,6 +126,15 @@ use std::collections::HashMap;
 
 /// The most calls that may be in progress at once, `main` included.
 pub const MAX_CALL_DEPTH: usize = 1000;
+
+/// How a statement finished executing (when it did not fail).
+enum Execution {
+    /// It ran to completion: continue with the next statement.
+    Normal,
+    /// A `return` ran: skip everything else up to the end of the
+    /// function call, which evaluates to this value.
+    Return(Value),
+}
 
 /// One call in progress.
 struct CallFrame<'p> {
@@ -200,22 +243,14 @@ impl<'p> Interpreter<'p> {
     /// Run a function body, directly in the function scope (the
     /// parameters' scope), and produce the call's value.
     ///
-    /// A `return` written directly in the body ends the call with its
-    /// value. A body that runs out of statements returns `Unit`. A
-    /// `return` nested inside an `if` or `while` cannot be seen from
-    /// here: it runs as an ordinary statement (see `execute_statement`),
-    /// and does not yet end the call.
+    /// This is where a `Return` stops unwinding: however deeply it was
+    /// nested, its value becomes the value of the call. A body that runs
+    /// out of statements without returning produces `Unit`.
     fn execute_body(&mut self, body: &[Statement]) -> Result<Value, RuntimeError> {
-        for stmt in body {
-            if let Statement::Return { value, .. } = stmt {
-                return match value {
-                    Some(value) => self.evaluate(value),
-                    None => Ok(Value::Unit),
-                };
-            }
-            self.execute_statement(stmt)?;
+        match self.execute_statements(body)? {
+            Execution::Return(value) => Ok(value),
+            Execution::Normal => Ok(Value::Unit),
         }
-        Ok(Value::Unit)
     }
 
     // --- the running call's environment ---
@@ -257,35 +292,40 @@ impl<'p> Interpreter<'p> {
     // --- statements ---
 
     /// Execute `statements` in a new block scope. The scope is popped
-    /// whether the statements finish normally or fail.
-    fn execute_block(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+    /// however the statements finish: normally, by returning, or by
+    /// failing.
+    fn execute_block(&mut self, statements: &[Statement]) -> Result<Execution, RuntimeError> {
         self.push_scope();
         let result = self.execute_statements(statements);
         self.pop_scope();
         result
     }
 
-    /// Execute `statements` in order, in the current scope, stopping at
-    /// the first error.
-    fn execute_statements(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+    /// Execute `statements` in order, in the current scope. The first
+    /// statement that returns (or fails) ends the sequence: the
+    /// statements after it never run.
+    fn execute_statements(&mut self, statements: &[Statement]) -> Result<Execution, RuntimeError> {
         for stmt in statements {
-            self.execute_statement(stmt)?;
+            match self.execute_statement(stmt)? {
+                Execution::Normal => {}
+                Execution::Return(value) => return Ok(Execution::Return(value)),
+            }
         }
-        Ok(())
+        Ok(Execution::Normal)
     }
 
-    fn execute_statement(&mut self, stmt: &Statement) -> Result<(), RuntimeError> {
+    fn execute_statement(&mut self, stmt: &Statement) -> Result<Execution, RuntimeError> {
         match stmt {
             Statement::Let { name, value, .. } => {
                 let value = self.evaluate(value)?;
                 self.define(name, value);
-                Ok(())
+                Ok(Execution::Normal)
             }
             // An expression statement is evaluated for its effect (an
             // assignment, say); its value is discarded.
             Statement::Expression { expr, .. } => {
                 self.evaluate(expr)?;
-                Ok(())
+                Ok(Execution::Normal)
             }
             Statement::If {
                 condition,
@@ -300,27 +340,31 @@ impl<'p> Interpreter<'p> {
                     // chains need no special handling here.
                     self.execute_block(else_branch)
                 } else {
-                    Ok(())
+                    Ok(Execution::Normal)
                 }
             }
+            // A `return` inside the body ends the loop as well as the
+            // iteration: it is passed outward instead of looping again.
             Statement::While {
                 condition, body, ..
             } => {
                 while self.evaluate_condition(condition)? {
-                    self.execute_block(body)?;
+                    match self.execute_block(body)? {
+                        Execution::Normal => {}
+                        Execution::Return(value) => return Ok(Execution::Return(value)),
+                    }
                 }
-                Ok(())
+                Ok(Execution::Normal)
             }
-            // A `return` directly in a function body never reaches this
-            // point: `execute_body` handles it. One nested in a block has
-            // no way yet to stop the statements around it from running,
-            // so its value is evaluated (which may fail) and execution
-            // carries on with the next statement.
+            // `return;` with no value returns `Unit`. (Whether the
+            // function declared a return type is not checked: that is the
+            // type checker's job.)
             Statement::Return { value, .. } => {
-                if let Some(value) = value {
-                    self.evaluate(value)?;
-                }
-                Ok(())
+                let value = match value {
+                    Some(value) => self.evaluate(value)?,
+                    None => Value::Unit,
+                };
+                Ok(Execution::Return(value))
             }
         }
     }
