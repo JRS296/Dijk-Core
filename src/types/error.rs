@@ -16,6 +16,13 @@ pub enum TypeErrorKind {
     /// An expression's type is not the type required where it appears,
     /// such as `let x: i32 = "hello";`.
     Mismatch { expected: Type, found: Type },
+    /// An assignment stores a value whose type is not the variable's,
+    /// such as `x = "hello";` for an `i32` variable `x`.
+    InvalidAssignment {
+        name: String,
+        expected: Type,
+        found: Type,
+    },
     /// An integer literal whose value does not fit in the type it was
     /// given, such as `3000000000` where an `i32` is expected. `value`
     /// includes a minus sign written directly before the digits.
@@ -52,6 +59,13 @@ impl TypeError {
             TypeErrorKind::Mismatch { expected, found } => {
                 format!("mismatched types: expected `{expected}`, found `{found}`")
             }
+            TypeErrorKind::InvalidAssignment {
+                name,
+                expected,
+                found,
+            } => format!(
+                "cannot assign a value of type `{found}` to `{name}`, which has type `{expected}`"
+            ),
             TypeErrorKind::IntegerLiteralOutOfRange { value, ty } => {
                 format!("integer literal `{value}` is out of range for `{ty}`")
             }

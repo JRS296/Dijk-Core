@@ -862,3 +862,96 @@ fn a_binding_records_where_its_name_is_and_whether_it_is_mutable() {
     assert!(bindings[1].mutable);
     assert_eq!(bindings[1].ty, Type::I64);
 }
+
+// --- assignments ---
+
+fn invalid_assignment(name: &str, expected: Type, found: Type) -> TypeErrorKind {
+    TypeErrorKind::InvalidAssignment {
+        name: name.to_string(),
+        expected,
+        found,
+    }
+}
+
+#[test]
+fn assigning_a_value_of_the_variables_type_is_valid() {
+    let source = in_main("let mut x: i32 = 10;\nx = 20;");
+    assert_eq!(type_at(&source, "x = 20"), Some(Type::I32));
+}
+
+#[test]
+fn an_assigned_literal_takes_the_variables_type() {
+    let source = in_main("let mut big: i64 = 0;\nbig = 3000000000;");
+    assert_eq!(type_at(&source, "3000000000"), Some(Type::I64));
+}
+
+#[test]
+fn assigning_a_value_of_another_type_is_rejected() {
+    let source = in_main("let mut x: i32 = 10;\nx = \"hello\";");
+    let errors = type_errors(&source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].kind,
+        invalid_assignment("x", Type::I32, Type::String)
+    );
+    // Reported at the value, the part with the wrong type.
+    assert_eq!(errors[0].span, span_of(&source, "\"hello\""));
+}
+
+#[test]
+fn an_inferred_type_is_fixed_at_the_declaration() {
+    // `x` became an `i32` when it was declared; it stays one.
+    assert_eq!(
+        error_kinds(&in_main("let mut x = 1;\nx = true;")),
+        vec![invalid_assignment("x", Type::I32, Type::Bool)]
+    );
+}
+
+#[test]
+fn an_i32_value_cannot_be_assigned_to_an_i64_variable() {
+    assert_eq!(
+        error_kinds(&in_main(
+            "let mut total: i64 = 0;\nlet step = 1;\ntotal = step;"
+        )),
+        vec![invalid_assignment("total", Type::I64, Type::I32)]
+    );
+}
+
+#[test]
+fn assignments_in_nested_blocks_check_against_the_outer_variable() {
+    assert_eq!(
+        error_kinds(&in_main("let mut x = 0;\nwhile x < 10 {\n    x = x + 1;\n    if x == 5 {\n        x = \"five\";\n    }\n}")),
+        vec![invalid_assignment("x", Type::I32, Type::String)]
+    );
+}
+
+#[test]
+fn assignments_check_against_the_variable_the_name_refers_to_there() {
+    // Inside the block `x` is the shadowing string; outside it, the i32.
+    assert_eq!(
+        error_kinds(&in_main("let mut x = 1;\nif true {\n    let mut x = \"a\";\n    x = \"b\";\n    x = 3;\n}\nx = 2;\nx = \"c\";")),
+        vec![
+            invalid_assignment("x", Type::String, Type::I32),
+            invalid_assignment("x", Type::I32, Type::String),
+        ]
+    );
+}
+
+#[test]
+fn a_chained_assignment_checks_each_link() {
+    let source = in_main("let mut a: i64 = 0;\nlet mut b: i64 = 0;\na = b = 7;");
+    assert_eq!(type_at(&source, "7"), Some(Type::I64));
+    assert_eq!(
+        error_kinds(&in_main("let mut s = \"a\";\nlet mut n = 0;\ns = n = 1;")),
+        vec![invalid_assignment("s", Type::String, Type::I32)]
+    );
+}
+
+#[test]
+fn the_type_checker_does_not_enforce_mutability() {
+    // Assigning to an immutable `x` is a semantic error, not a type error:
+    // given a program that skipped semantic analysis, the checker only
+    // asks whether the value's type fits.
+    let program = parse_syntax(&in_main("let x = 1;\nx = 2;"));
+    assert!(types::check(&program).is_ok());
+}

@@ -90,6 +90,16 @@
 //! checked *before* its own variable is declared. The checker does not
 //! resolve names again: semantic analysis already has, so a name is
 //! simply looked up in Γ.
+//!
+//! # Assignments
+//!
+//! `x = value` stores a new value in an existing variable, so the value
+//! must have the type the variable already has. A variable's type is
+//! fixed when it is declared and never changes, whatever is assigned to
+//! it later. The variable's type is also what an integer literal on the
+//! right is expected to be. Whether `x` may be assigned *at all* is a
+//! different question, about the binding rather than the value, and
+//! semantic analysis has already answered it (only a `let mut` may be).
 
 use super::env::TypeEnvironment;
 use super::error::{TypeError, TypeErrorKind};
@@ -286,9 +296,8 @@ impl Checker {
             Expression::Unary {
                 operator, operand, ..
             } => self.check_unary(expr, *operator, operand, expected),
-            // Typing assignments and calls needs rules this checker does
-            // not have yet. Until it does, such an expression is left
-            // untyped.
+            // Typing calls needs rules this checker does not have yet.
+            // Until it does, a call is left untyped.
             Expression::Binary {
                 left,
                 operator,
@@ -299,10 +308,35 @@ impl Checker {
             // variable is in Γ. (If the checker is ever given a program
             // that skipped analysis, an unknown name is simply untyped.)
             Expression::Identifier(name, _) => self.env.lookup(name).unwrap_or(Type::Error),
-            Expression::Assign { .. } | Expression::Call { .. } => Type::Error,
+            Expression::Assign { name, value, .. } => self.check_assignment(name, value),
+            Expression::Call { .. } => Type::Error,
         };
         self.record(expr.span(), ty);
         ty
+    }
+
+    /// `name = value`: the value must have the variable's type, and so
+    /// does the assignment expression itself, since it evaluates to the
+    /// value it stored (which is what makes `a = b = 0` work).
+    fn check_assignment(&mut self, name: &str, value: &Expression) -> Type {
+        let Some(declared) = self.env.lookup(name) else {
+            // Unresolved: semantic analysis reports that, not the checker.
+            self.check_expression(value, None);
+            return Type::Error;
+        };
+
+        let found = self.check_expression(value, Some(declared));
+        if !Type::compatible(declared, found) {
+            self.error(
+                TypeErrorKind::InvalidAssignment {
+                    name: name.to_string(),
+                    expected: declared,
+                    found,
+                },
+                value.span(),
+            );
+        }
+        declared
     }
 
     /// Record `ty` as the type of the expression at `span`. `Error` is
