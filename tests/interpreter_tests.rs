@@ -234,16 +234,16 @@ fn type_annotations_are_not_enforced_at_run_time() {
 #[test]
 fn assignment_changes_a_variable() {
     assert_eq!(
-        main_returns("let x = 1;\nx = x + 1;\nx = x * 10;\nreturn x;"),
+        main_returns("let mut x = 1;\nx = x + 1;\nx = x * 10;\nreturn x;"),
         int(20)
     );
 }
 
 #[test]
 fn an_assignment_evaluates_to_the_assigned_value() {
-    assert_eq!(main_returns("let x = 0;\nreturn x = 5;"), int(5));
+    assert_eq!(main_returns("let mut x = 0;\nreturn x = 5;"), int(5));
     assert_eq!(
-        main_returns("let a = 0;\nlet b = 0;\na = b = 7;\nreturn a + b;"),
+        main_returns("let mut a = 0;\nlet mut b = 0;\na = b = 7;\nreturn a + b;"),
         int(14)
     );
 }
@@ -251,7 +251,7 @@ fn an_assignment_evaluates_to_the_assigned_value() {
 #[test]
 fn an_assignment_in_a_block_changes_the_outer_variable() {
     assert_eq!(
-        main_returns("let x = 1;\nif true {\n    x = 2;\n}\nreturn x;"),
+        main_returns("let mut x = 1;\nif true {\n    x = 2;\n}\nreturn x;"),
         int(2)
     );
 }
@@ -259,7 +259,7 @@ fn an_assignment_in_a_block_changes_the_outer_variable() {
 #[test]
 fn a_shadowing_variable_disappears_with_its_block() {
     assert_eq!(
-        main_returns("let x = 1;\nif true {\n    let x = 100;\n    x = x + 1;\n}\nreturn x;"),
+        main_returns("let x = 1;\nif true {\n    let mut x = 100;\n    x = x + 1;\n}\nreturn x;"),
         int(1)
     );
 }
@@ -269,7 +269,7 @@ fn a_shadowing_variable_disappears_with_its_block() {
 #[test]
 fn if_runs_the_then_branch_when_the_condition_is_true() {
     assert_eq!(
-        main_returns("let r = 0;\nif 1 < 2 {\n    r = 1;\n}\nreturn r;"),
+        main_returns("let mut r = 0;\nif 1 < 2 {\n    r = 1;\n}\nreturn r;"),
         int(1)
     );
 }
@@ -277,7 +277,7 @@ fn if_runs_the_then_branch_when_the_condition_is_true() {
 #[test]
 fn if_without_else_does_nothing_when_the_condition_is_false() {
     assert_eq!(
-        main_returns("let r = 0;\nif 1 > 2 {\n    r = 1;\n}\nreturn r;"),
+        main_returns("let mut r = 0;\nif 1 > 2 {\n    r = 1;\n}\nreturn r;"),
         int(0)
     );
 }
@@ -285,7 +285,7 @@ fn if_without_else_does_nothing_when_the_condition_is_false() {
 #[test]
 fn if_runs_the_else_branch_when_the_condition_is_false() {
     assert_eq!(
-        main_returns("let r = 0;\nif false {\n    r = 1;\n} else {\n    r = 2;\n}\nreturn r;"),
+        main_returns("let mut r = 0;\nif false {\n    r = 1;\n} else {\n    r = 2;\n}\nreturn r;"),
         int(2)
     );
 }
@@ -313,7 +313,7 @@ fn else_if_chains_pick_the_first_true_branch() {
 #[test]
 fn while_repeats_until_its_condition_is_false() {
     assert_eq!(
-        main_returns("let x = 10;\nwhile x > 0 {\n    x = x - 1;\n}\nreturn x;"),
+        main_returns("let mut x = 10;\nwhile x > 0 {\n    x = x - 1;\n}\nreturn x;"),
         int(0)
     );
 }
@@ -321,7 +321,7 @@ fn while_repeats_until_its_condition_is_false() {
 #[test]
 fn while_sums_a_range() {
     assert_eq!(
-        main_returns("let sum = 0;\nlet i = 1;\nwhile i <= 100 {\n    sum = sum + i;\n    i = i + 1;\n}\nreturn sum;"),
+        main_returns("let mut sum = 0;\nlet mut i = 1;\nwhile i <= 100 {\n    sum = sum + i;\n    i = i + 1;\n}\nreturn sum;"),
         int(5050)
     );
 }
@@ -329,7 +329,7 @@ fn while_sums_a_range() {
 #[test]
 fn a_while_whose_condition_starts_false_never_runs() {
     assert_eq!(
-        main_returns("let r = 0;\nwhile false {\n    r = 1;\n}\nreturn r;"),
+        main_returns("let mut r = 0;\nwhile false {\n    r = 1;\n}\nreturn r;"),
         int(0)
     );
 }
@@ -337,7 +337,7 @@ fn a_while_whose_condition_starts_false_never_runs() {
 #[test]
 fn a_let_in_a_loop_body_is_fresh_on_every_iteration() {
     assert_eq!(
-        main_returns("let total = 0;\nlet i = 0;\nwhile i < 3 {\n    let square = i * i;\n    total = total + square;\n    i = i + 1;\n}\nreturn total;"),
+        main_returns("let mut total = 0;\nlet mut i = 0;\nwhile i < 3 {\n    let square = i * i;\n    total = total + square;\n    i = i + 1;\n}\nreturn total;"),
         int(5)
     );
 }
@@ -372,7 +372,7 @@ fn arguments_are_bound_to_parameters_in_order() {
 fn arguments_are_evaluated_left_to_right_before_the_call() {
     // The first argument's assignment runs before the second's.
     assert_eq!(
-        value("fn pair(a: i32, b: i32) -> i32 {\n    return a * 100 + b;\n}\n\nfn main() {\n    let x = 0;\n    return pair(x = x + 1, x = x * 10);\n}\n"),
+        value("fn pair(a: i32, b: i32) -> i32 {\n    return a * 100 + b;\n}\n\nfn main() {\n    let mut x = 0;\n    return pair(x = x + 1, x = x * 10);\n}\n"),
         int(110)
     );
 }
@@ -387,10 +387,11 @@ fn arguments_can_be_any_expression_including_calls() {
 
 #[test]
 fn arguments_are_passed_by_value() {
-    // The callee assigns to its own parameter, in its own frame; the
-    // caller's variable is untouched.
+    // The callee changes its own copy of the argument, in its own frame;
+    // the caller's variable is untouched. (Parameters are immutable, so
+    // the copy is made explicit with a `let mut`.)
     assert_eq!(
-        value("fn clobber(n: i32) -> i32 {\n    n = 0;\n    return n;\n}\n\nfn main() {\n    let n = 5;\n    clobber(n);\n    return n;\n}\n"),
+        value("fn clobber(n: i32) -> i32 {\n    let mut copy = n;\n    copy = 0;\n    return copy;\n}\n\nfn main() {\n    let n = 5;\n    clobber(n);\n    return n;\n}\n"),
         int(5)
     );
 }
@@ -398,7 +399,7 @@ fn arguments_are_passed_by_value() {
 #[test]
 fn each_call_gets_fresh_local_variables() {
     assert_eq!(
-        value("fn counter() -> i32 {\n    let count = 0;\n    count = count + 1;\n    return count;\n}\n\nfn main() {\n    return counter() + counter() + counter();\n}\n"),
+        value("fn counter() -> i32 {\n    let mut count = 0;\n    count = count + 1;\n    return count;\n}\n\nfn main() {\n    return counter() + counter() + counter();\n}\n"),
         int(3)
     );
 }
@@ -444,7 +445,7 @@ fn code_after_return_never_runs() {
 #[test]
 fn return_leaves_nested_blocks_and_loops() {
     assert_eq!(
-        value("fn first_multiple_of_seven(start: i32) -> i32 {\n    let i = start;\n    while true {\n        if i / 7 * 7 == i {\n            return i;\n        }\n        i = i + 1;\n    }\n    return 0 - 1;\n}\n\nfn main() {\n    return first_multiple_of_seven(30);\n}\n"),
+        value("fn first_multiple_of_seven(start: i32) -> i32 {\n    let mut i = start;\n    while true {\n        if i / 7 * 7 == i {\n            return i;\n        }\n        i = i + 1;\n    }\n    return 0 - 1;\n}\n\nfn main() {\n    return first_multiple_of_seven(30);\n}\n"),
         int(35)
     );
 }
@@ -811,7 +812,7 @@ fn recursion_through_a_loop_and_a_branch() {
     // Counts the nodes of a complete binary tree of the given height,
     // recursing from inside a `while` nested in an `if`.
     assert_eq!(
-        value("fn nodes(height: i32) -> i32 {\n    if height == 0 {\n        return 1;\n    } else {\n        let total = 1;\n        let child = 0;\n        while child < 2 {\n            total = total + nodes(height - 1);\n            child = child + 1;\n        }\n        return total;\n    }\n}\n\nfn main() {\n    return nodes(5);\n}\n"),
+        value("fn nodes(height: i32) -> i32 {\n    if height == 0 {\n        return 1;\n    } else {\n        let mut total = 1;\n        let mut child = 0;\n        while child < 2 {\n            total = total + nodes(height - 1);\n            child = child + 1;\n        }\n        return total;\n    }\n}\n\nfn main() {\n    return nodes(5);\n}\n"),
         int(63)
     );
 }

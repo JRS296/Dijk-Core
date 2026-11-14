@@ -144,13 +144,8 @@ fn identifiers_are_resolved_inside_every_kind_of_expression() {
 // --- assignment ---
 
 #[test]
-fn assignment_to_a_declared_variable_is_valid() {
-    assert_valid("fn main() {\n    let x = 1;\n    x = x + 1;\n    return x;\n}\n");
-}
-
-#[test]
-fn assignment_to_a_parameter_is_valid() {
-    assert_valid("fn f(n: i32) { n = 0; }\nfn main() { f(1); }\n");
+fn assignment_to_a_mutable_variable_is_valid() {
+    assert_valid("fn main() {\n    let mut x = 1;\n    x = x + 1;\n    return x;\n}\n");
 }
 
 #[test]
@@ -161,6 +156,98 @@ fn assignment_to_an_undeclared_variable_is_reported() {
             name: "x".to_string()
         }]
     );
+}
+
+// --- mutability ---
+
+fn assign_to_immutable(name: &str) -> SemanticErrorKind {
+    SemanticErrorKind::AssignToImmutable {
+        name: name.to_string(),
+    }
+}
+
+#[test]
+fn assignment_to_an_immutable_variable_is_reported() {
+    let source = "fn main() {\n    let x = 1;\n    x = 2;\n}\n";
+    let errors = analyze(source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, assign_to_immutable("x"));
+    // Reported at the assignment, not at the declaration.
+    assert_eq!(errors[0].span.start, source.find("x = 2").unwrap());
+}
+
+#[test]
+fn assignment_to_a_parameter_is_reported() {
+    // Parameters cannot be declared `mut`, so they are never assignable.
+    assert_eq!(
+        kinds("fn f(n: i32) { n = 0; }\nfn main() { f(1); }\n"),
+        vec![SemanticErrorKind::AssignToParameter {
+            name: "n".to_string()
+        }]
+    );
+}
+
+#[test]
+fn an_immutable_variable_cannot_be_assigned_from_a_nested_block() {
+    assert_eq!(
+        kinds("fn main() {\n    let x = 1;\n    while true {\n        if true {\n            x = 2;\n        }\n    }\n}\n"),
+        vec![assign_to_immutable("x")]
+    );
+}
+
+#[test]
+fn a_mutable_variable_can_be_assigned_from_a_nested_block() {
+    assert_valid("fn main() {\n    let mut x = 1;\n    while x < 5 {\n        if true {\n            x = x + 1;\n        }\n    }\n}\n");
+}
+
+#[test]
+fn an_immutable_shadow_hides_a_mutable_variable() {
+    // Inside the block, `x` is the new, immutable one; after it, the
+    // outer, mutable one again.
+    assert_eq!(
+        kinds("fn main() {\n    let mut x = 1;\n    if true {\n        let x = 2;\n        x = 3;\n    }\n    x = 4;\n}\n"),
+        vec![assign_to_immutable("x")]
+    );
+}
+
+#[test]
+fn a_mutable_shadow_does_not_make_the_outer_variable_mutable() {
+    assert_eq!(
+        kinds("fn main() {\n    let x = 1;\n    if true {\n        let mut x = 2;\n        x = 3;\n    }\n    x = 4;\n}\n"),
+        vec![assign_to_immutable("x")]
+    );
+}
+
+#[test]
+fn a_parameter_can_be_shadowed_by_a_mutable_variable() {
+    assert_valid("fn f(n: i32) {\n    if true {\n        let mut n = n;\n        n = n + 1;\n    }\n}\nfn main() { f(1); }\n");
+}
+
+#[test]
+fn every_immutable_target_in_a_chained_assignment_is_reported() {
+    // `a = b = 7` assigns to both `a` and `b`.
+    assert_eq!(
+        kinds("fn main() {\n    let a = 0;\n    let mut b = 0;\n    let c = 0;\n    a = b = c = 7;\n}\n"),
+        vec![assign_to_immutable("a"), assign_to_immutable("c")]
+    );
+}
+
+#[test]
+fn mutability_is_not_about_types() {
+    // The assigned value's type is not semantic analysis's business: a
+    // `let mut` of one type assigned a value of another passes here, and
+    // is left for the type checker.
+    assert_valid("fn main() {\n    let mut x = 1;\n    x = \"not an integer\";\n}\n");
+}
+
+#[test]
+fn mutability_errors_render_as_semantic_errors() {
+    let source = "fn main() {\n    let limit = 10;\n    limit = 11;\n}\n";
+    let rendered = analyze(source)[0].render("example.dk", source);
+    assert!(rendered.starts_with(
+        "semantic error: cannot assign to immutable variable `limit` (declare it with `let mut limit` to allow assignment)\n"
+    ));
+    assert!(rendered.contains(" --> example.dk:3:5"));
 }
 
 // --- functions and calls ---
@@ -332,7 +419,7 @@ fn the_then_branch_and_else_branch_are_separate_scopes() {
 #[test]
 fn outer_variables_are_visible_in_nested_blocks() {
     assert_valid(
-        "fn main() {\n    let total = 0;\n    while total < 10 {\n        if total == 5 {\n            total = total + 2;\n        } else {\n            total = total + 1;\n        }\n    }\n    return total;\n}\n",
+        "fn main() {\n    let mut total = 0;\n    while total < 10 {\n        if total == 5 {\n            total = total + 2;\n        } else {\n            total = total + 1;\n        }\n    }\n    return total;\n}\n",
     );
 }
 
@@ -365,7 +452,7 @@ fn a_let_cannot_redeclare_a_parameter() {
 
 #[test]
 fn shadowing_in_an_inner_scope_is_allowed() {
-    assert_valid("fn main() {\n    let x = 1;\n    if true {\n        let x = \"inner\";\n        x = \"still inner\";\n    }\n    return x;\n}\n");
+    assert_valid("fn main() {\n    let x = 1;\n    if true {\n        let mut x = \"inner\";\n        x = \"still inner\";\n    }\n    return x;\n}\n");
 }
 
 #[test]

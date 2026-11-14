@@ -52,6 +52,35 @@
 //! would silently make the first variable unreachable. Parameters and
 //! the body's top-level `let`s share the function scope, so a `let`
 //! cannot redeclare a parameter either.
+//!
+//! # Mutability
+//!
+//! Each scope records, for every name it declares, what kind of
+//! variable it is, because that decides whether the name may be assigned
+//! to:
+//!
+//! ```text
+//! let mut count = 0;    count → mutable     count = 1;  ✓
+//! let limit = 10;       limit → immutable   limit = 1;  ✗
+//! fn f(n: i32)          n     → parameter   n = 1;      ✗
+//! ```
+//!
+//! A binding can change only if it was declared `let mut`. Parameters
+//! have no syntax to be declared `mut`, so they never can. This is a rule
+//! about *bindings*, not about values or their types: whether `x = 1;` is
+//! allowed depends on how `x` was declared, and the type checker, which
+//! runs next, decides separately whether `1` has the right type for `x`.
+//! The assignment is checked against whichever binding the name resolves
+//! to, so shadowing can change the answer:
+//!
+//! ```dijk
+//! let mut x = 1;
+//! if true {
+//!     let x = 2;   // a new, immutable `x` hides the mutable one
+//!     x = 3;       // semantic error: this `x` is immutable
+//! }
+//! x = 4;           // fine: the block has ended, and this is the outer `x`
+//! ```
 
 use super::error::{SemanticError, SemanticErrorKind};
 use crate::ast::declaration::{Declaration, Function, Program};
@@ -59,7 +88,7 @@ use crate::ast::expression::Expression;
 use crate::ast::statement::Statement;
 use crate::ast::visit::{self, Visitor};
 use crate::lexer::token::Span;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Resolve every name in `program`, returning the errors found in source
 /// order.
@@ -84,10 +113,23 @@ struct Resolver {
     /// Filled by pass 1, before any body is resolved.
     functions: HashMap<String, usize>,
     /// The variable scopes enclosing the node currently being resolved,
-    /// innermost last. While a function is being resolved, the first
-    /// entry is its function scope; it is empty between functions.
-    scopes: Vec<HashSet<String>>,
+    /// innermost last: each maps a name to the kind of variable it
+    /// declares. While a function is being resolved, the first entry is
+    /// its function scope; it is empty between functions.
+    scopes: Vec<HashMap<String, Variable>>,
     errors: Vec<SemanticError>,
+}
+
+/// The kinds of variable a name can declare. This is all the resolver
+/// needs to know about a variable to decide whether it may be assigned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Variable {
+    /// A function parameter. Never assignable.
+    Parameter,
+    /// A plain `let`. Never assignable.
+    Immutable,
+    /// A `let mut`. Assignable.
+    Mutable,
 }
 
 impl Resolver {
@@ -96,26 +138,38 @@ impl Resolver {
     }
 
     fn begin_scope(&mut self) {
-        self.scopes.push(HashSet::new());
+        self.scopes.push(HashMap::new());
     }
 
     fn end_scope(&mut self) {
         self.scopes.pop();
     }
 
-    /// Declare `name` in the innermost scope. Returns `false`, declaring
-    /// nothing, if that scope already has a variable of that name.
-    fn declare(&mut self, name: &str) -> bool {
+    /// Declare `name` as a `variable` of the given kind in the innermost
+    /// scope. Returns `false`, declaring nothing, if that scope already
+    /// has a variable of that name.
+    fn declare(&mut self, name: &str, variable: Variable) -> bool {
         match self.scopes.last_mut() {
-            Some(scope) => scope.insert(name.to_string()),
-            None => false,
+            Some(scope) if !scope.contains_key(name) => {
+                scope.insert(name.to_string(), variable);
+                true
+            }
+            _ => false,
         }
     }
 
-    /// Whether `name` is visible from the current point: declared in the
-    /// innermost scope or any scope enclosing it.
+    /// The variable `name` refers to from the current point: the one
+    /// declared in the innermost scope that declares it, if any.
+    fn lookup(&self, name: &str) -> Option<Variable> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+    }
+
+    /// Whether `name` is visible from the current point.
     fn is_visible(&self, name: &str) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(name))
+        self.lookup(name).is_some()
     }
 
     /// Resolve the statements of an `if`/`else` branch or a `while` body
@@ -191,17 +245,22 @@ impl Resolver {
         }
     }
 
-    /// An assignment target must already exist: `x = 1;` changes `x`, it
-    /// does not declare it.
+    /// An assignment target must already exist, since `x = 1;` changes `x`
+    /// and does not declare it, and it must have been declared `let mut`.
     fn resolve_assignment_target(&mut self, name: &str, span: Span) {
-        if !self.is_visible(name) {
-            self.error(
-                SemanticErrorKind::AssignToUndeclared {
-                    name: name.to_string(),
-                },
-                span,
-            );
-        }
+        let kind = match self.lookup(name) {
+            Some(Variable::Mutable) => return,
+            Some(Variable::Immutable) => SemanticErrorKind::AssignToImmutable {
+                name: name.to_string(),
+            },
+            Some(Variable::Parameter) => SemanticErrorKind::AssignToParameter {
+                name: name.to_string(),
+            },
+            None => SemanticErrorKind::AssignToUndeclared {
+                name: name.to_string(),
+            },
+        };
+        self.error(kind, span);
     }
 
     /// A call must name a known function and pass it exactly as many
@@ -234,7 +293,7 @@ impl Visitor for Resolver {
         self.begin_scope();
 
         for param in &function.params {
-            if !self.declare(&param.name) {
+            if !self.declare(&param.name, Variable::Parameter) {
                 self.error(
                     SemanticErrorKind::DuplicateParameter {
                         name: param.name.clone(),
@@ -260,10 +319,19 @@ impl Visitor for Resolver {
     fn visit_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Let {
-                name, value, span, ..
+                mutable,
+                name,
+                value,
+                span,
+                ..
             } => {
                 self.visit_expression(value);
-                if !self.declare(name) {
+                let variable = if *mutable {
+                    Variable::Mutable
+                } else {
+                    Variable::Immutable
+                };
+                if !self.declare(name, variable) {
                     self.error(
                         SemanticErrorKind::DuplicateVariable { name: name.clone() },
                         *span,

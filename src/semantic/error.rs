@@ -14,6 +14,12 @@ pub enum SemanticErrorKind {
     /// `let` (or as a parameter). Assignment changes an existing
     /// variable; it never creates one.
     AssignToUndeclared { name: String },
+    /// An assignment targets a variable declared with a plain `let`.
+    /// Only a `let mut` binding may change after it is declared.
+    AssignToImmutable { name: String },
+    /// An assignment targets a function parameter. Parameters cannot be
+    /// declared `mut`, so they never change.
+    AssignToParameter { name: String },
     /// A call names a function that the program does not define.
     UnknownFunction { name: String },
     /// A call passes a different number of arguments than the function
@@ -56,6 +62,12 @@ impl SemanticError {
             }
             SemanticErrorKind::AssignToUndeclared { name } => {
                 format!("cannot assign to undeclared variable `{name}`")
+            }
+            SemanticErrorKind::AssignToImmutable { name } => format!(
+                "cannot assign to immutable variable `{name}` (declare it with `let mut {name}` to allow assignment)"
+            ),
+            SemanticErrorKind::AssignToParameter { name } => {
+                format!("cannot assign to parameter `{name}`: parameters are immutable")
             }
             SemanticErrorKind::UnknownFunction { name } => format!("unknown function `{name}`"),
             SemanticErrorKind::ArityMismatch {

@@ -26,10 +26,12 @@
 //! Interpreter        "What does it do?"
 //! ```
 //!
-//! In Dijk 0.0.4 this stage is deliberately small. It resolves names and
-//! nothing else. It is **not** a type checker: `let x: i32 = "hello";` is
-//! still accepted here, because checking types is a later milestone.
-//! See `docs/semantic.md`.
+//! This stage is deliberately small. It resolves names, and checks that
+//! only bindings declared `let mut` are ever assigned to: both are
+//! questions about what a *name* refers to. It is **not** a type checker:
+//! `let x: i32 = "hello";` is accepted here, because whether a value's
+//! type fits is a separate question, asked by a separate stage. See
+//! `docs/semantic.md`.
 
 pub mod error;
 mod resolve;
