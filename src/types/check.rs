@@ -70,14 +70,36 @@
 //! checked first and its type is what the right one is expected to have,
 //! unless the left operand is a bare literal and the right one is not, in
 //! which case the order is swapped (`1 + x`).
+//!
+//! # Variables
+//!
+//! A `let` is where a variable gets its type, in one of two ways:
+//!
+//! ```text
+//! let x = 10;          inference: x gets the initializer's type, i32
+//! let y: i64 = 10;     checking:  the initializer is checked against the
+//!                                 annotation (and the literal becomes
+//!                                 an i64); y gets the annotated type
+//! ```
+//!
+//! Either way the variable is declared in the type environment Γ
+//! (`env.rs`), and every later use of it has that type. Scopes follow
+//! exactly the rules semantic analysis checked the program against: each
+//! `if`/`else` branch and `while` body is a block scope of its own, an
+//! inner `let` may shadow an outer variable, and an initializer is
+//! checked *before* its own variable is declared. The checker does not
+//! resolve names again: semantic analysis already has, so a name is
+//! simply looked up in Γ.
 
+use super::env::TypeEnvironment;
 use super::error::{TypeError, TypeErrorKind};
 use super::rules;
-use super::ty::Type;
-use super::TypedProgram;
+use super::ty::{self, Type};
+use super::{Binding, TypedFunction, TypedProgram};
 use crate::ast::declaration::{Declaration, Function, Program};
 use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use crate::ast::statement::Statement;
+use crate::ast::types::Type as TypeAnnotation;
 use crate::lexer::token::Span;
 
 /// Check every function in `program`, returning what was learned about
@@ -85,6 +107,8 @@ use crate::lexer::token::Span;
 pub fn check_program(program: &Program) -> Result<TypedProgram, Vec<TypeError>> {
     let mut checker = Checker {
         typed: TypedProgram::default(),
+        env: TypeEnvironment::new(),
+        bindings: Vec::new(),
         errors: Vec::new(),
     };
 
@@ -105,6 +129,11 @@ pub fn check_program(program: &Program) -> Result<TypedProgram, Vec<TypeError>> 
 struct Checker {
     /// What has been learned so far: grows as the walk proceeds.
     typed: TypedProgram,
+    /// Γ: the type of every variable visible at the current point of the
+    /// function being checked.
+    env: TypeEnvironment,
+    /// Every variable the function being checked has declared so far.
+    bindings: Vec<Binding>,
     errors: Vec<TypeError>,
 }
 
@@ -115,8 +144,19 @@ impl Checker {
 
     // --- functions and statements ---
 
+    /// Each function is checked in a fresh environment: a body cannot see
+    /// the variables of any other function.
     fn check_function(&mut self, function: &Function) {
+        self.env = TypeEnvironment::new();
+        self.bindings = Vec::new();
+
+        // The body's top-level statements live in the function scope.
         self.check_statements(&function.body);
+
+        self.typed.functions.push(TypedFunction {
+            name: function.name.clone(),
+            bindings: std::mem::take(&mut self.bindings),
+        });
     }
 
     fn check_statements(&mut self, statements: &[Statement]) {
@@ -125,13 +165,35 @@ impl Checker {
         }
     }
 
+    /// Check the statements of an `if`/`else` branch or a `while` body in
+    /// a block scope of their own.
+    fn check_block(&mut self, statements: &[Statement]) {
+        self.env.push_scope();
+        self.check_statements(statements);
+        self.env.pop_scope();
+    }
+
+    /// Declare a variable in the innermost scope, and record it.
+    fn declare(&mut self, name: &str, span: Span, ty: Type) {
+        self.env.declare(name, ty);
+        self.bindings.push(Binding {
+            name: name.to_string(),
+            span,
+            ty,
+            depth: self.env.depth(),
+        });
+    }
+
     /// Statements have no type of their own. Checking one means checking
     /// the expressions it contains, and the statements nested in it.
     fn check_statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Let { value, .. } => {
-                self.check_expression(value, None);
-            }
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                span,
+            } => self.check_let(name, type_annotation.as_ref(), value, *span),
             Statement::Return { value, .. } => {
                 if let Some(value) = value {
                     self.check_expression(value, None);
@@ -147,18 +209,60 @@ impl Checker {
                 ..
             } => {
                 self.check_expression(condition, None);
-                self.check_statements(then_branch);
+                self.check_block(then_branch);
                 if let Some(else_branch) = else_branch {
-                    self.check_statements(else_branch);
+                    self.check_block(else_branch);
                 }
             }
             Statement::While {
                 condition, body, ..
             } => {
                 self.check_expression(condition, None);
-                self.check_statements(body);
+                self.check_block(body);
             }
         }
+    }
+
+    /// `let name: annotation = value;`, or `let name = value;`.
+    ///
+    /// With an annotation, the annotation decides the variable's type and
+    /// the initializer is checked against it. Without one, the variable
+    /// takes the initializer's type. The initializer is checked before
+    /// the variable is declared, so `let x = x + 1;` reads an outer `x`.
+    fn check_let(
+        &mut self,
+        name: &str,
+        annotation: Option<&TypeAnnotation>,
+        value: &Expression,
+        span: Span,
+    ) {
+        let ty = match annotation {
+            None => self.check_expression(value, None),
+            Some(annotation) => match ty::resolve(annotation) {
+                Ok(declared) => {
+                    let found = self.check_expression(value, Some(declared));
+                    if !Type::compatible(declared, found) {
+                        self.error(
+                            TypeErrorKind::Mismatch {
+                                expected: declared,
+                                found,
+                            },
+                            value.span(),
+                        );
+                    }
+                    declared
+                }
+                // An unknown type name: report it, still check the
+                // initializer on its own, and leave the variable untyped
+                // so that its uses are not reported as well.
+                Err(error) => {
+                    self.errors.push(error);
+                    self.check_expression(value, None);
+                    Type::Error
+                }
+            },
+        };
+        self.declare(name, span, ty);
     }
 
     // --- expressions ---
@@ -178,18 +282,20 @@ impl Checker {
             Expression::Unary {
                 operator, operand, ..
             } => self.check_unary(expr, *operator, operand, expected),
-            // Typing variables, assignments and calls needs to know what
-            // names stand for, which this checker does not know yet. Until
-            // it does, such an expression is left untyped.
+            // Typing assignments and calls needs rules this checker does
+            // not have yet. Until it does, such an expression is left
+            // untyped.
             Expression::Binary {
                 left,
                 operator,
                 right,
                 ..
             } => self.check_binary(expr, left, *operator, right, expected),
-            Expression::Identifier(..) | Expression::Assign { .. } | Expression::Call { .. } => {
-                Type::Error
-            }
+            // Semantic analysis has already resolved every name, so the
+            // variable is in Γ. (If the checker is ever given a program
+            // that skipped analysis, an unknown name is simply untyped.)
+            Expression::Identifier(name, _) => self.env.lookup(name).unwrap_or(Type::Error),
+            Expression::Assign { .. } | Expression::Call { .. } => Type::Error,
         };
         self.record(expr.span(), ty);
         ty

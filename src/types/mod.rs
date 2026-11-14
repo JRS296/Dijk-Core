@@ -27,12 +27,14 @@
 //!
 //! The module is split by concept: what a type is (`ty.rs`), how a type
 //! error is reported (`error.rs`), which operations each type allows
-//! (`rules.rs`), and the checker that walks a program giving every
-//! expression a type (`check.rs`). What the checker
+//! (`rules.rs`), which type each variable in scope has (`env.rs`), and
+//! the checker that walks a program giving every expression a type
+//! (`check.rs`). What the checker
 //! *produces* is defined here, because it is this stage's contract with
 //! every stage after it.
 
 mod check;
+pub mod env;
 pub mod error;
 pub mod rules;
 pub mod ty;
@@ -62,9 +64,34 @@ use ty::Type;
 /// expression exactly, and is something every stage already has.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TypedProgram {
+    /// What was learned about each function, in declaration order.
+    pub functions: Vec<TypedFunction>,
     /// The type of every expression the checker could type, keyed by the
     /// expression's span.
     pub expression_types: HashMap<Span, Type>,
+}
+
+/// What the checker learned about one function.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedFunction {
+    pub name: String,
+    /// Every variable the function declares, in the order the checker
+    /// met them (source order). Each one is listed separately, so a
+    /// variable that shadows another appears as a binding of its own.
+    pub bindings: Vec<Binding>,
+}
+
+/// A variable and the type it was given: one entry of the typing
+/// environment Γ, as it stood where the variable was declared.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binding {
+    pub name: String,
+    /// Where the variable was declared: its `let` statement.
+    pub span: Span,
+    pub ty: Type,
+    /// How deeply nested the declaring scope is: 0 for the function
+    /// scope, 1 for a block directly inside it, and so on.
+    pub depth: usize,
 }
 
 impl TypedProgram {

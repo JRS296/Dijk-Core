@@ -13,6 +13,9 @@ pub enum TypeErrorKind {
     /// A type annotation names a type Dijk does not have, such as
     /// `let x: banana = 1;`.
     UnknownType { name: String },
+    /// An expression's type is not the type required where it appears,
+    /// such as `let x: i32 = "hello";`.
+    Mismatch { expected: Type, found: Type },
     /// An integer literal whose value does not fit in the type it was
     /// given, such as `3000000000` where an `i32` is expected. `value`
     /// includes a minus sign written directly before the digits.
@@ -46,6 +49,9 @@ impl TypeError {
     fn message(&self) -> String {
         match &self.kind {
             TypeErrorKind::UnknownType { name } => format!("unknown type `{name}`"),
+            TypeErrorKind::Mismatch { expected, found } => {
+                format!("mismatched types: expected `{expected}`, found `{found}`")
+            }
             TypeErrorKind::IntegerLiteralOutOfRange { value, ty } => {
                 format!("integer literal `{value}` is out of range for `{ty}`")
             }

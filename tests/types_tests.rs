@@ -33,6 +33,7 @@ use ast::declaration::Program;
 use ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use ast::visit::{self, Visitor};
 use lexer::token::Span;
+use types::env::TypeEnvironment;
 use types::error::{TypeError, TypeErrorKind};
 use types::rules;
 use types::ty::{self, Type};
@@ -599,4 +600,250 @@ fn a_literal_out_of_range_inside_an_operation_is_reported() {
         error_kinds(&in_main("let x = 1 + 3000000000;")),
         vec![out_of_range(3000000000, Type::I32)]
     );
+}
+
+// --- the type environment ---
+
+#[test]
+fn a_declared_variable_has_its_type() {
+    let mut env = TypeEnvironment::new();
+    env.declare("x", Type::I32);
+    assert_eq!(env.lookup("x"), Some(Type::I32));
+    assert_eq!(env.lookup("y"), None);
+}
+
+#[test]
+fn an_inner_scope_shadows_and_then_forgets() {
+    let mut env = TypeEnvironment::new();
+    env.declare("x", Type::I32);
+    env.push_scope();
+    assert_eq!(env.depth(), 1);
+    env.declare("x", Type::String);
+    assert_eq!(env.lookup("x"), Some(Type::String));
+    env.pop_scope();
+    assert_eq!(env.depth(), 0);
+    assert_eq!(env.lookup("x"), Some(Type::I32));
+}
+
+#[test]
+fn outer_variables_are_visible_in_inner_scopes() {
+    let mut env = TypeEnvironment::new();
+    env.declare("x", Type::Bool);
+    env.push_scope();
+    env.push_scope();
+    assert_eq!(env.lookup("x"), Some(Type::Bool));
+}
+
+#[test]
+fn the_function_scope_is_never_popped() {
+    let mut env = TypeEnvironment::new();
+    env.declare("x", Type::I64);
+    env.pop_scope();
+    assert_eq!(env.depth(), 0);
+    assert_eq!(env.lookup("x"), Some(Type::I64));
+}
+
+// --- variables ---
+
+/// The bindings the checker recorded for `main`: name, type and depth.
+fn bindings_of_main(source: &str) -> Vec<(String, Type, usize)> {
+    let typed = typed(source);
+    let main = typed
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .expect("the fixture has a main");
+    main.bindings
+        .iter()
+        .map(|binding| (binding.name.clone(), binding.ty, binding.depth))
+        .collect()
+}
+
+fn binding(name: &str, ty: Type, depth: usize) -> (String, Type, usize) {
+    (name.to_string(), ty, depth)
+}
+
+fn mismatch(expected: Type, found: Type) -> TypeErrorKind {
+    TypeErrorKind::Mismatch { expected, found }
+}
+
+#[test]
+fn a_let_without_annotation_takes_the_initializers_type() {
+    assert_eq!(
+        bindings_of_main(&in_main("let x = 10;\nlet y = true;\nlet name = \"Dijk\";")),
+        vec![
+            binding("x", Type::I32, 0),
+            binding("y", Type::Bool, 0),
+            binding("name", Type::String, 0),
+        ]
+    );
+}
+
+#[test]
+fn a_let_with_an_annotation_has_the_annotated_type() {
+    assert_eq!(
+        bindings_of_main(&in_main("let x: i32 = 10;\nlet y: bool = true;")),
+        vec![binding("x", Type::I32, 0), binding("y", Type::Bool, 0)]
+    );
+}
+
+#[test]
+fn an_annotation_is_what_an_integer_literal_is_expected_to_be() {
+    let source = in_main("let big: i64 = 10;");
+    assert_eq!(type_at(&source, "10"), Some(Type::I64));
+    assert_eq!(
+        bindings_of_main(&source),
+        vec![binding("big", Type::I64, 0)]
+    );
+}
+
+#[test]
+fn the_expected_type_flows_through_arithmetic_into_every_literal() {
+    let source = in_main("let x: i64 = 1 + 2 * -3;");
+    for literal in ["1", "2", "-3", "2 * -3"] {
+        assert_eq!(type_at(&source, literal), Some(Type::I64), "`{literal}`");
+    }
+}
+
+#[test]
+fn a_literal_that_only_fits_in_i64_needs_an_i64_context() {
+    assert!(types::check(&parse(&in_main("let big: i64 = 3000000000;"))).is_ok());
+    assert_eq!(
+        error_kinds(&in_main("let small = 3000000000;")),
+        vec![out_of_range(3000000000, Type::I32)]
+    );
+}
+
+#[test]
+fn a_string_initializer_for_an_i32_is_a_mismatch() {
+    let source = in_main("let x: i32 = \"hello\";");
+    let errors = type_errors(&source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, mismatch(Type::I32, Type::String));
+    // Reported at the initializer, the part that has the wrong type.
+    assert_eq!(errors[0].span, span_of(&source, "\"hello\""));
+}
+
+#[test]
+fn an_integer_initializer_for_a_bool_is_a_mismatch() {
+    assert_eq!(
+        error_kinds(&in_main("let b: bool = 1;")),
+        vec![mismatch(Type::Bool, Type::I32)]
+    );
+}
+
+#[test]
+fn an_i32_variable_is_not_an_i64() {
+    // No implicit conversion, not even the widening one.
+    assert_eq!(
+        error_kinds(&in_main("let x: i32 = 10;\nlet y: i64 = x;")),
+        vec![mismatch(Type::I64, Type::I32)]
+    );
+}
+
+#[test]
+fn a_variable_use_has_the_variables_type() {
+    let source = in_main("let x: i64 = 5;\nlet y = x + 1;");
+    assert_eq!(type_at(&source, "x + 1"), Some(Type::I64));
+    // The literal took its type from `x`.
+    assert_eq!(type_at(&source, "1"), Some(Type::I64));
+    assert_eq!(
+        bindings_of_main(&source),
+        vec![binding("x", Type::I64, 0), binding("y", Type::I64, 0)]
+    );
+}
+
+#[test]
+fn a_literal_on_the_left_takes_its_type_from_the_right() {
+    let source = in_main("let x: i64 = 5;\nlet y = 1 + x;");
+    assert_eq!(type_at(&source, "1 + x"), Some(Type::I64));
+}
+
+#[test]
+fn mixing_i32_and_i64_variables_is_rejected() {
+    assert_eq!(
+        error_kinds(&in_main("let a: i64 = 1;\nlet b = 2;\nlet c = a + b;")),
+        vec![invalid_binary(BinaryOperator::Add, Type::I64, Type::I32)]
+    );
+}
+
+#[test]
+fn an_unknown_type_name_is_reported_once() {
+    // `x`'s later use is not reported again.
+    let source = in_main("let x: banana = 1;\nlet y = x + 1;");
+    let errors = type_errors(&source);
+    assert_eq!(
+        errors.iter().map(|e| e.kind.clone()).collect::<Vec<_>>(),
+        vec![TypeErrorKind::UnknownType {
+            name: "banana".to_string()
+        }]
+    );
+    assert_eq!(errors[0].span, span_of(&source, "banana"));
+}
+
+#[test]
+fn a_variable_from_a_mistaken_initializer_is_not_reported_again() {
+    assert_eq!(
+        error_kinds(&in_main("let x = 1 + true;\nlet y = x * 2;")),
+        vec![invalid_binary(BinaryOperator::Add, Type::I32, Type::Bool)]
+    );
+}
+
+#[test]
+fn a_shadowing_variable_has_its_own_type_and_disappears_with_its_block() {
+    let source = in_main(
+        "let x = 1;\nif true {\n    let x = \"inner\";\n    let s = x + \"!\";\n}\nlet y = x + 1;",
+    );
+    assert_eq!(
+        bindings_of_main(&source),
+        vec![
+            binding("x", Type::I32, 0),
+            binding("x", Type::String, 1),
+            binding("s", Type::String, 1),
+            binding("y", Type::I32, 0),
+        ]
+    );
+}
+
+#[test]
+fn a_shadowing_initializer_reads_the_outer_variable() {
+    let source = in_main("let x = 1;\nwhile false {\n    let x = x < 2;\n}");
+    assert_eq!(
+        bindings_of_main(&source),
+        vec![binding("x", Type::I32, 0), binding("x", Type::Bool, 1)]
+    );
+}
+
+#[test]
+fn bindings_record_the_depth_of_their_block() {
+    let source = in_main("let a = 1;\nif true {\n    let b = 2;\n    while false {\n        let c = 3;\n    }\n} else {\n    let d = 4;\n}");
+    assert_eq!(
+        bindings_of_main(&source),
+        vec![
+            binding("a", Type::I32, 0),
+            binding("b", Type::I32, 1),
+            binding("c", Type::I32, 2),
+            binding("d", Type::I32, 1),
+        ]
+    );
+}
+
+#[test]
+fn each_function_has_its_own_bindings() {
+    let typed =
+        typed("fn helper() {\n    let h = true;\n}\n\nfn main() {\n    let m = \"m\";\n}\n");
+    let names: Vec<_> = typed
+        .functions
+        .iter()
+        .map(|f| {
+            (
+                f.name.as_str(),
+                f.bindings
+                    .iter()
+                    .map(|b| b.name.as_str())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    assert_eq!(names, vec![("helper", vec!["h"]), ("main", vec!["m"])]);
 }
