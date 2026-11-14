@@ -2,6 +2,7 @@
 //! operations are not valid for the kinds of value they are applied to.
 
 use super::ty::Type;
+use crate::ast::expression::{BinaryOperator, UnaryOperator};
 use crate::diagnostics;
 use crate::lexer::token::Span;
 use std::fmt;
@@ -16,6 +17,19 @@ pub enum TypeErrorKind {
     /// given, such as `3000000000` where an `i32` is expected. `value`
     /// includes a minus sign written directly before the digits.
     IntegerLiteralOutOfRange { value: i64, ty: Type },
+    /// A binary operator applied to operand types it has no rule for, such
+    /// as `10 + "hello"` or `1 < true` (see `rules.rs`).
+    InvalidBinaryOperation {
+        operator: BinaryOperator,
+        left: Type,
+        right: Type,
+    },
+    /// A unary operator applied to an operand type it has no rule for,
+    /// such as `-true` or `!1`.
+    InvalidUnaryOperation {
+        operator: UnaryOperator,
+        operand: Type,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +48,14 @@ impl TypeError {
             TypeErrorKind::UnknownType { name } => format!("unknown type `{name}`"),
             TypeErrorKind::IntegerLiteralOutOfRange { value, ty } => {
                 format!("integer literal `{value}` is out of range for `{ty}`")
+            }
+            TypeErrorKind::InvalidBinaryOperation {
+                operator,
+                left,
+                right,
+            } => format!("cannot apply `{operator}` to `{left}` and `{right}`"),
+            TypeErrorKind::InvalidUnaryOperation { operator, operand } => {
+                format!("cannot apply `{operator}` to `{operand}`")
             }
         }
     }

@@ -26,13 +26,15 @@
 //! ```
 //!
 //! The module is split by concept: what a type is (`ty.rs`), how a type
-//! error is reported (`error.rs`), and the checker that walks a program
-//! giving every expression a type (`check.rs`). What the checker
+//! error is reported (`error.rs`), which operations each type allows
+//! (`rules.rs`), and the checker that walks a program giving every
+//! expression a type (`check.rs`). What the checker
 //! *produces* is defined here, because it is this stage's contract with
 //! every stage after it.
 
 mod check;
 pub mod error;
+pub mod rules;
 pub mod ty;
 
 use crate::ast::declaration::Program;

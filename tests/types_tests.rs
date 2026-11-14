@@ -30,10 +30,11 @@ mod semantic;
 mod types;
 
 use ast::declaration::Program;
-use ast::expression::Expression;
+use ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use ast::visit::{self, Visitor};
 use lexer::token::Span;
 use types::error::{TypeError, TypeErrorKind};
+use types::rules;
 use types::ty::{self, Type};
 use types::TypedProgram;
 
@@ -373,4 +374,229 @@ fn no_two_expressions_share_a_span() {
     sorted.sort_by_key(|span| (span.start, span.end));
     sorted.dedup();
     assert_eq!(sorted.len(), spans.0.len());
+}
+
+// --- the operator rules table ---
+
+#[test]
+fn addition_is_defined_for_same_type_integers_and_for_strings() {
+    let add = |l, r| rules::binary_result(BinaryOperator::Add, l, r);
+    assert_eq!(add(Type::I32, Type::I32), Some(Type::I32));
+    assert_eq!(add(Type::I64, Type::I64), Some(Type::I64));
+    assert_eq!(add(Type::String, Type::String), Some(Type::String));
+    assert_eq!(add(Type::I32, Type::I64), None);
+    assert_eq!(add(Type::I64, Type::I32), None);
+    assert_eq!(add(Type::I32, Type::String), None);
+    assert_eq!(add(Type::Bool, Type::Bool), None);
+}
+
+#[test]
+fn other_arithmetic_is_integers_only() {
+    for operator in [
+        BinaryOperator::Sub,
+        BinaryOperator::Mul,
+        BinaryOperator::Div,
+    ] {
+        assert_eq!(
+            rules::binary_result(operator, Type::I64, Type::I64),
+            Some(Type::I64)
+        );
+        assert_eq!(
+            rules::binary_result(operator, Type::String, Type::String),
+            None
+        );
+        assert_eq!(rules::binary_result(operator, Type::I32, Type::I64), None);
+    }
+}
+
+#[test]
+fn ordering_compares_same_type_integers_to_a_bool() {
+    for operator in [
+        BinaryOperator::Lt,
+        BinaryOperator::Le,
+        BinaryOperator::Gt,
+        BinaryOperator::Ge,
+    ] {
+        assert_eq!(
+            rules::binary_result(operator, Type::I32, Type::I32),
+            Some(Type::Bool)
+        );
+        assert_eq!(
+            rules::binary_result(operator, Type::String, Type::String),
+            None
+        );
+        assert_eq!(rules::binary_result(operator, Type::Bool, Type::Bool), None);
+    }
+}
+
+#[test]
+fn equality_needs_two_operands_of_the_same_type_other_than_unit() {
+    for operator in [BinaryOperator::Eq, BinaryOperator::NotEq] {
+        for ty in [Type::I32, Type::I64, Type::Bool, Type::String] {
+            assert_eq!(rules::binary_result(operator, ty, ty), Some(Type::Bool));
+        }
+        assert_eq!(rules::binary_result(operator, Type::Unit, Type::Unit), None);
+        assert_eq!(rules::binary_result(operator, Type::I32, Type::I64), None);
+        assert_eq!(rules::binary_result(operator, Type::I32, Type::Bool), None);
+    }
+}
+
+#[test]
+fn unary_minus_negates_integers_and_not_negates_booleans() {
+    assert_eq!(
+        rules::unary_result(UnaryOperator::Neg, Type::I32),
+        Some(Type::I32)
+    );
+    assert_eq!(
+        rules::unary_result(UnaryOperator::Neg, Type::I64),
+        Some(Type::I64)
+    );
+    assert_eq!(rules::unary_result(UnaryOperator::Neg, Type::Bool), None);
+    assert_eq!(
+        rules::unary_result(UnaryOperator::Not, Type::Bool),
+        Some(Type::Bool)
+    );
+    assert_eq!(rules::unary_result(UnaryOperator::Not, Type::I32), None);
+}
+
+#[test]
+fn no_operator_accepts_unit() {
+    for operator in [
+        BinaryOperator::Add,
+        BinaryOperator::Sub,
+        BinaryOperator::Lt,
+        BinaryOperator::Eq,
+    ] {
+        assert_eq!(rules::binary_result(operator, Type::Unit, Type::Unit), None);
+    }
+    assert_eq!(rules::unary_result(UnaryOperator::Neg, Type::Unit), None);
+    assert_eq!(rules::unary_result(UnaryOperator::Not, Type::Unit), None);
+}
+
+// --- operators in programs ---
+
+fn invalid_binary(operator: BinaryOperator, left: Type, right: Type) -> TypeErrorKind {
+    TypeErrorKind::InvalidBinaryOperation {
+        operator,
+        left,
+        right,
+    }
+}
+
+fn invalid_unary(operator: UnaryOperator, operand: Type) -> TypeErrorKind {
+    TypeErrorKind::InvalidUnaryOperation { operator, operand }
+}
+
+#[test]
+fn nested_arithmetic_is_typed_from_the_inside_out() {
+    let source = in_main("let x = 10 + 20 * 3;");
+    assert_eq!(type_at(&source, "20 * 3"), Some(Type::I32));
+    assert_eq!(type_at(&source, "10 + 20 * 3"), Some(Type::I32));
+}
+
+#[test]
+fn comparisons_and_equality_are_bool() {
+    let source = in_main("let a = 1 < 2;\nlet b = \"x\" == \"y\";\nlet c = true != false;");
+    assert_eq!(type_at(&source, "1 < 2"), Some(Type::Bool));
+    assert_eq!(type_at(&source, "\"x\" == \"y\""), Some(Type::Bool));
+    assert_eq!(type_at(&source, "true != false"), Some(Type::Bool));
+}
+
+#[test]
+fn strings_concatenate_with_plus() {
+    let source = in_main("let s = \"a\" + \"b\";");
+    assert_eq!(type_at(&source, "\"a\" + \"b\""), Some(Type::String));
+}
+
+#[test]
+fn unary_operators() {
+    let source = in_main("let a = !false;\nlet b = --5;");
+    assert_eq!(type_at(&source, "!false"), Some(Type::Bool));
+    assert_eq!(type_at(&source, "--5"), Some(Type::I32));
+}
+
+#[test]
+fn adding_an_integer_and_a_string_is_rejected() {
+    let source = in_main("let x = 10 + \"hello\";");
+    let errors = type_errors(&source);
+    assert_eq!(
+        errors[0].kind,
+        invalid_binary(BinaryOperator::Add, Type::I32, Type::String)
+    );
+    // Reported at the whole operation.
+    assert_eq!(errors[0].span, span_of(&source, "10 + \"hello\""));
+}
+
+#[test]
+fn multiplying_a_boolean_is_rejected() {
+    assert_eq!(
+        error_kinds(&in_main("let x = true * 10;")),
+        vec![invalid_binary(BinaryOperator::Mul, Type::Bool, Type::I32)]
+    );
+}
+
+#[test]
+fn ordering_a_string_and_a_boolean_is_rejected() {
+    assert_eq!(
+        error_kinds(&in_main("let x = \"hello\" < false;")),
+        vec![invalid_binary(BinaryOperator::Lt, Type::String, Type::Bool)]
+    );
+}
+
+#[test]
+fn chained_comparisons_compare_a_bool_with_an_integer() {
+    // `1 < 2 < 3` is `(1 < 2) < 3`.
+    assert_eq!(
+        error_kinds(&in_main("let x = 1 < 2 < 3;")),
+        vec![invalid_binary(BinaryOperator::Lt, Type::Bool, Type::I32)]
+    );
+}
+
+#[test]
+fn invalid_unary_operations_are_rejected() {
+    assert_eq!(
+        error_kinds(&in_main("let a = -true;\nlet b = !1;")),
+        vec![
+            invalid_unary(UnaryOperator::Neg, Type::Bool),
+            invalid_unary(UnaryOperator::Not, Type::I32),
+        ]
+    );
+}
+
+#[test]
+fn one_mistake_is_reported_once() {
+    // `1 + true` is wrong; the `* 2` and `== 3` around it are not
+    // reported again.
+    assert_eq!(
+        error_kinds(&in_main("let x = (1 + true) * 2 == 3;")),
+        vec![invalid_binary(BinaryOperator::Add, Type::I32, Type::Bool)]
+    );
+}
+
+#[test]
+fn independent_mistakes_are_all_reported() {
+    assert_eq!(
+        error_kinds(&in_main("let a = 1 + true;\nlet b = \"s\" * 2;")),
+        vec![
+            invalid_binary(BinaryOperator::Add, Type::I32, Type::Bool),
+            invalid_binary(BinaryOperator::Mul, Type::String, Type::I32),
+        ]
+    );
+}
+
+#[test]
+fn the_checker_never_evaluates_anything() {
+    // Division by zero and overflow are facts about values, found only
+    // by running the program. Both expressions are perfectly well-typed.
+    let source = in_main("let a = 1 / 0;\nlet b = 2147483647 + 1;");
+    assert_eq!(type_at(&source, "1 / 0"), Some(Type::I32));
+    assert_eq!(type_at(&source, "2147483647 + 1"), Some(Type::I32));
+}
+
+#[test]
+fn a_literal_out_of_range_inside_an_operation_is_reported() {
+    assert_eq!(
+        error_kinds(&in_main("let x = 1 + 3000000000;")),
+        vec![out_of_range(3000000000, Type::I32)]
+    );
 }

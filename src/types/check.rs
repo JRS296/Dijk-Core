@@ -44,12 +44,39 @@
 //! anything. A minus sign written directly before a literal counts as
 //! part of the literal, so `-2147483648`, the smallest `i32`, is accepted
 //! even though `2147483648` on its own is not.
+//!
+//! # Operators
+//!
+//! An operator expression is typed from the inside out: first its
+//! operands, then the operator's rule for those operand types
+//! (`rules.rs`). The checker never computes anything:
+//!
+//! ```text
+//! 10 + 20 * 3
+//!
+//! Binary(+)              check 10           → i32
+//! ├── Integer(10)        check 20 * 3
+//! └── Binary(*)              check 20       → i32
+//!     ├── Integer(20)        check 3        → i32
+//!     └── Integer(3)         i32 * i32      → i32
+//!                        i32 + i32          → i32
+//! ```
+//!
+//! The interpreter walks the same tree and gets `70`; the checker gets
+//! `i32`, and would get it just the same for `10 + 20 / 0`.
+//!
+//! A literal operand takes its type from the *other* operand, so that
+//! `x + 1` works whatever integer type `x` has. The left operand is
+//! checked first and its type is what the right one is expected to have,
+//! unless the left operand is a bare literal and the right one is not, in
+//! which case the order is swapped (`1 + x`).
 
 use super::error::{TypeError, TypeErrorKind};
+use super::rules;
 use super::ty::Type;
 use super::TypedProgram;
 use crate::ast::declaration::{Declaration, Function, Program};
-use crate::ast::expression::{Expression, UnaryOperator};
+use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use crate::ast::statement::Statement;
 use crate::lexer::token::Span;
 
@@ -151,14 +178,18 @@ impl Checker {
             Expression::Unary {
                 operator, operand, ..
             } => self.check_unary(expr, *operator, operand, expected),
-            // Everything else is built from other expressions, and typing
-            // it needs rules this checker does not have yet (operators,
-            // variables, assignments and calls). Until it does, such an
-            // expression is left untyped.
-            Expression::Identifier(..)
-            | Expression::Binary { .. }
-            | Expression::Assign { .. }
-            | Expression::Call { .. } => Type::Error,
+            // Typing variables, assignments and calls needs to know what
+            // names stand for, which this checker does not know yet. Until
+            // it does, such an expression is left untyped.
+            Expression::Binary {
+                left,
+                operator,
+                right,
+                ..
+            } => self.check_binary(expr, left, *operator, right, expected),
+            Expression::Identifier(..) | Expression::Assign { .. } | Expression::Call { .. } => {
+                Type::Error
+            }
         };
         self.record(expr.span(), ty);
         ty
@@ -214,19 +245,98 @@ impl Checker {
 
     /// A unary expression. A minus sign written directly before digits is
     /// not an operation at all: `-42` is a negative integer literal.
+    /// Otherwise the operand is checked, then the operator's rule for its
+    /// type is looked up.
     fn check_unary(
         &mut self,
         expr: &Expression,
-        _operator: UnaryOperator,
-        _operand: &Expression,
+        operator: UnaryOperator,
+        operand: &Expression,
         expected: Option<Type>,
     ) -> Type {
         if let Some(value) = literal_value(expr) {
             return self.check_integer_literal(expr, value, expected);
         }
-        // Unary operators applied to anything else are typed by the
-        // operator rules, which this checker does not have yet.
-        Type::Error
+
+        // `-x` has the type of `x`, so what is expected of the result is
+        // what is expected of the operand. `!x` is a `bool` whatever is
+        // expected of it.
+        let operand_expected = match operator {
+            UnaryOperator::Neg => expected,
+            UnaryOperator::Not => None,
+        };
+        let operand_ty = self.check_expression(operand, operand_expected);
+        if operand_ty == Type::Error {
+            return Type::Error;
+        }
+
+        match rules::unary_result(operator, operand_ty) {
+            Some(result) => result,
+            None => {
+                self.error(
+                    TypeErrorKind::InvalidUnaryOperation {
+                        operator,
+                        operand: operand_ty,
+                    },
+                    expr.span(),
+                );
+                Type::Error
+            }
+        }
+    }
+
+    /// A binary expression: check both operands, then look up the
+    /// operator's rule for their types.
+    fn check_binary(
+        &mut self,
+        expr: &Expression,
+        left: &Expression,
+        operator: BinaryOperator,
+        right: &Expression,
+        expected: Option<Type>,
+    ) -> Type {
+        // The result of `+ - * /` has the type of its operands, so what is
+        // expected of the result is what is expected of them. A comparison
+        // is a `bool` whatever its operands are, so nothing is passed down.
+        let operand_expected = if rules::is_arithmetic(operator) {
+            expected
+        } else {
+            None
+        };
+
+        // Check the operand that can decide the type first, and expect the
+        // other one to have the same type. That is the left one, unless it
+        // is a bare literal and the right one is not (`1 + x`).
+        let (left_ty, right_ty) = if literal_value(left).is_some() && literal_value(right).is_none()
+        {
+            let right_ty = self.check_expression(right, operand_expected);
+            let left_ty = self.check_expression(left, Some(right_ty));
+            (left_ty, right_ty)
+        } else {
+            let left_ty = self.check_expression(left, operand_expected);
+            let right_ty = self.check_expression(right, Some(left_ty));
+            (left_ty, right_ty)
+        };
+
+        // An operand that could not be typed has already been reported.
+        if left_ty == Type::Error || right_ty == Type::Error {
+            return Type::Error;
+        }
+
+        match rules::binary_result(operator, left_ty, right_ty) {
+            Some(result) => result,
+            None => {
+                self.error(
+                    TypeErrorKind::InvalidBinaryOperation {
+                        operator,
+                        left: left_ty,
+                        right: right_ty,
+                    },
+                    expr.span(),
+                );
+                Type::Error
+            }
+        }
     }
 }
 
