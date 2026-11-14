@@ -165,6 +165,28 @@ fn expression_span_accessor_covers_every_variant() {
         .span(),
         s
     );
+    assert_eq!(
+        Expression::Call {
+            callee: "f".to_string(),
+            arguments: vec![Expression::Integer(1, s)],
+            span: s
+        }
+        .span(),
+        s
+    );
+}
+
+#[test]
+fn traversal_reaches_call_arguments() {
+    let s = span(0, 0);
+    let call = Expression::Call {
+        callee: "add".to_string(),
+        arguments: vec![Expression::Integer(1, s), Expression::Integer(2, s)],
+        span: s,
+    };
+    let mut collector = IntegerCollector(Vec::new());
+    collector.visit_expression(&call);
+    assert_eq!(collector.0, vec![1, 2]);
 }
 
 #[test]

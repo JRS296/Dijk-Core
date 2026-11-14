@@ -146,7 +146,8 @@ Expression
 ├── Binary   { left: Box<Expression>, operator: BinaryOperator,
 │              right: Box<Expression>, span }
 ├── Unary    { operator: UnaryOperator, operand: Box<Expression>, span }
-└── Assign   { name: String, value: Box<Expression>, span }
+├── Assign   { name: String, value: Box<Expression>, span }
+└── Call     { callee: String, arguments: Vec<Expression>, span }
 ```
 
 `Integer` holds a parsed `i64`, not the source lexeme — a lexeme like
@@ -161,16 +162,23 @@ analysis's, not yet asked here).
 
 An AST sketched from first principles (e.g. Step 3's own illustrative
 Rust enums) often includes more than Dijk Core's grammar (`docs/parser.md`)
-actually supports. Two things were deliberately left out, rather than
-added speculatively:
+actually supports.
 
-- **No `Call` expression.** Dijk Core's grammar has no function-call
-  syntax yet. Adding a `Call` node now would be a variant the parser can
-  never construct — dead code advertising a feature that doesn't exist.
-- **No `Grouping` expression.** Covered above — this one is dropped on
-  purpose, not merely because the grammar lacks it.
+- **No `Grouping` expression.** Covered above — dropped on purpose, not
+  merely because the grammar lacks it.
+- **`Call`'s callee is a `String`, not a general expression.** A typical
+  sketch gives `Call` a `callee: Box<Expression>`, so that calling the
+  result of another expression (a returned function, a field access,
+  ...) is representable. Dijk has no first-class functions and no way to
+  produce a callable value except by naming a declared function
+  directly, so a callee is always exactly an identifier — `callee:
+  String` says that directly, rather than allowing a generality nothing
+  can construct. (`Call` itself was dropped entirely as of `dijk-0.0.3`,
+  for the same "nothing constructs it" reason; `dijk-0.0.4` added it back
+  once the grammar actually gained call syntax.)
 
-Both may be reconsidered once the grammar actually grows to need them.
+Both are the same principle: match the AST to the grammar you actually
+have, not to a grammar you might have later.
 
 ## Source spans
 

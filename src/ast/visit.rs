@@ -102,5 +102,10 @@ pub fn walk_expression<V: Visitor + ?Sized>(visitor: &mut V, expr: &Expression) 
             visitor.visit_expression(right);
         }
         Expression::Assign { value, .. } => visitor.visit_expression(value),
+        Expression::Call { arguments, .. } => {
+            for argument in arguments {
+                visitor.visit_expression(argument);
+            }
+        }
     }
 }

@@ -157,6 +157,12 @@ fn expr_doc(expr: &Expression) -> Doc {
         Expression::Assign { name, value, .. } => {
             Doc::Node(format!("Assign({name})"), vec![expr_doc(value)])
         }
+        Expression::Call {
+            callee, arguments, ..
+        } => Doc::Node(
+            format!("Call({callee})"),
+            arguments.iter().map(expr_doc).collect(),
+        ),
     }
 }
 

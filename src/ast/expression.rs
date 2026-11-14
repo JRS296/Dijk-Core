@@ -34,6 +34,14 @@ pub enum Expression {
         value: Box<Expression>,
         span: Span,
     },
+    /// A function call. `callee` is a function name, not a general
+    /// expression — Dijk has no first-class functions, so there is
+    /// nothing else a callee could be yet.
+    Call {
+        callee: String,
+        arguments: Vec<Expression>,
+        span: Span,
+    },
 }
 
 impl Expression {
@@ -45,7 +53,8 @@ impl Expression {
             | Expression::Identifier(_, span)
             | Expression::Binary { span, .. }
             | Expression::Unary { span, .. }
-            | Expression::Assign { span, .. } => *span,
+            | Expression::Assign { span, .. }
+            | Expression::Call { span, .. } => *span,
         }
     }
 }
