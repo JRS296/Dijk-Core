@@ -9,6 +9,14 @@ use super::token::{Span, Token, TokenKind};
 /// Operates on raw bytes rather than decoded `char`s: Dijk Core's initial
 /// lexical grammar (see `docs/lexer.md`) is ASCII-only, so a byte offset
 /// doubles as a source position without needing UTF-8 decoding.
+///
+/// Source text is UTF-8, though, and a non-ASCII character is several
+/// bytes long. It may appear inside a string or a comment, which the
+/// lexer steps through byte by byte until an ASCII `"` or newline (never
+/// part of a longer character). Anywhere else it is an error, and the
+/// lexer decodes the whole character, reports it once, and steps over all
+/// of its bytes. So the lexer only ever stops on a character boundary,
+/// and every span it produces starts and ends on one.
 pub struct Lexer<'a> {
     source: &'a str,
     bytes: &'a [u8],
@@ -114,8 +122,13 @@ impl<'a> Lexer<'a> {
             ';' => TokenKind::Semicolon,
             '.' => TokenKind::Dot,
             other => {
+                // `other` is the first byte of the character. For a
+                // non-ASCII character, decode the whole thing and skip
+                // all of its bytes, so it is reported once, as itself.
+                let character = self.source[start..].chars().next().unwrap_or(other);
+                self.pos = start + character.len_utf8();
                 return Err(LexError::new(
-                    LexErrorKind::UnexpectedCharacter(other),
+                    LexErrorKind::UnexpectedCharacter(character),
                     Span::new(start, self.pos),
                 ));
             }
@@ -178,7 +191,9 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             match self.peek() {
-                Some(c) if c.is_whitespace() => {
+                // ASCII whitespace only: a byte of a multi-byte character
+                // must never be mistaken for whitespace on its own.
+                Some(c) if c.is_ascii() && c.is_whitespace() => {
                     self.advance();
                 }
                 Some('/') if self.peek_at(1) == Some('/') => {

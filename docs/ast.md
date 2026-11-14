@@ -148,7 +148,7 @@ collapsing it is another instance of this milestone's central lesson.
 
 ```text
 Expression
-├── Integer(i64, Span)
+├── Integer(u64, Span)
 ├── String(String, Span)
 ├── Boolean(bool, Span)
 ├── Identifier(String, Span)
@@ -159,13 +159,17 @@ Expression
 └── Call     { callee: String, arguments: Vec<Expression>, span }
 ```
 
-`Integer` holds a parsed `i64`, not the source lexeme — a lexeme like
+`Integer` holds the literal's digits as a parsed value, not the source
+lexeme. It is an unsigned `u64`, never negative: in `-5`, the minus sign
+is a `Unary` node around `Integer(5)`. A lexeme like
 `"99999999999999999999"` that doesn't fit in 64 bits is a parse error
 (`ParseErrorKind::InvalidIntegerLiteral`), not something the AST needs to
 represent. Converting digits to a value is still a syntactic act, distinct
 from asking whether that value is *valid where it appears* (an `i32`
-parameter given a value that doesn't fit — that question is the type
-checker's, `docs/types.md`, not the AST's).
+parameter given a value that doesn't fit). That question is the type
+checker's (`docs/types.md`), not the AST's. The checker also knows the
+sign, which is why `-9223372036854775808`, whose digits alone exceed every
+signed type, is a valid `i64` literal.
 
 ## Deviations from a "typical" example AST
 

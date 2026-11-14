@@ -1,0 +1,10 @@
+# Line endings. Every text file is stored in the repository with LF line
+# endings, whatever platform it was committed from; a checkout uses the
+# local `core.autocrlf` / `core.eol` setting (CRLF on a typical Windows
+# machine). The compiler itself accepts either: diagnostics never show the
+# `\r` of a CRLF line.
+* text=auto
+
+# Dijk source files are always text, whatever their extension.
+*.dk   text
+*.dijk text

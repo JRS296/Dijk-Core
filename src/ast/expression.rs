@@ -12,7 +12,12 @@ use std::fmt;
 /// (see `docs/ast.md`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Integer(i64, Span),
+    /// An integer literal's digits, as a value. It is never negative: in
+    /// `-5` the minus sign is a `Unary` node around it. It may be larger
+    /// than any signed type holds (`9223372036854775808`, the digits of
+    /// the smallest `i64`); whether it fits is decided by the type
+    /// checker, which knows both the sign and the type.
+    Integer(u64, Span),
     String(String, Span),
     Boolean(bool, Span),
     Identifier(String, Span),

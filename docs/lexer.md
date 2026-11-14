@@ -49,7 +49,9 @@ A contiguous run of ASCII digits.
 ```
 
 Hexadecimal, binary, octal forms, and numeric suffixes are out of scope for
-the initial lexer.
+the initial lexer. The lexer does not convert the digits to a number or
+decide whether they are too large; the parser and the type checker do
+(`docs/parser.md`, `docs/types.md`).
 
 ### String literals
 
@@ -138,7 +140,25 @@ of scope for the initial lexer.
 ### Whitespace
 
 Spaces, tabs, carriage returns, and newlines separate tokens and are
-otherwise discarded. Dijk Core is not whitespace-sensitive.
+otherwise discarded. Dijk Core is not whitespace-sensitive. Only these
+ASCII characters are whitespace: a non-breaking space, say, is not.
+
+### Non-ASCII text
+
+Source files are UTF-8. A non-ASCII character is allowed inside a string
+literal or a comment, and nowhere else. Outside them it is an
+`unexpected character` error, reported **once per character**, with its
+Unicode code point, since it may be invisible or look like an ASCII one:
+
+```text
+error: unexpected character 'é' (U+00E9)
+ --> example.dk:2:12
+  |
+2 |     let café = 1;
+  |            ^
+```
+
+Lexing continues after it with the next character.
 
 ### End of file
 

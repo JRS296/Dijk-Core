@@ -481,7 +481,10 @@ impl Parser {
         match token.kind {
             TokenKind::Integer => {
                 self.advance();
-                let value = token.lexeme.parse::<i64>().map_err(|_| {
+                // Only the digits' value is read here, as an unsigned
+                // 64-bit number. Whether it fits where it is used (and
+                // with which sign) is the type checker's question.
+                let value = token.lexeme.parse::<u64>().map_err(|_| {
                     ParseError::new(
                         ParseErrorKind::InvalidIntegerLiteral {
                             lexeme: token.lexeme.clone(),

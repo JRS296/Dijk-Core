@@ -412,6 +412,43 @@ fn integer_literal_out_of_range_is_an_error() {
         &errors[0].kind,
         ParseErrorKind::InvalidIntegerLiteral { .. }
     ));
+    assert_eq!(
+        errors[0].to_string(),
+        "integer literal '99999999999999999999' is too large: its value does not fit in 64 bits"
+    );
+}
+
+#[test]
+fn any_literal_that_fits_in_64_bits_parses() {
+    // Including ones no signed type can hold: whether a value fits where
+    // it is used is the type checker's question, not the parser's.
+    assert!(matches!(
+        single_expr_statement("9223372036854775808"),
+        Expression::Integer(9_223_372_036_854_775_808, _)
+    ));
+    assert!(matches!(
+        single_expr_statement("18446744073709551615"),
+        Expression::Integer(u64::MAX, _)
+    ));
+    assert_eq!(
+        parse_errors("fn main() {\n    18446744073709551616;\n}\n").len(),
+        1
+    );
+}
+
+#[test]
+fn the_smallest_i64_parses_as_minus_applied_to_its_digits() {
+    match single_expr_statement("-9223372036854775808") {
+        Expression::Unary {
+            operator: UnaryOperator::Neg,
+            operand,
+            ..
+        } => assert!(matches!(
+            *operand,
+            Expression::Integer(9_223_372_036_854_775_808, _)
+        )),
+        other => panic!("expected Unary(-), got {other:?}"),
+    }
 }
 
 #[test]

@@ -653,6 +653,18 @@ fn the_most_negative_integers_are_reachable() {
         main_returning("i64", "return -9223372036854775807 - 1;"),
         long(i64::MIN)
     );
+    // And the smallest `i64` is a single literal too.
+    assert_eq!(
+        main_returning("i64", "return -9223372036854775808;"),
+        long(i64::MIN)
+    );
+    assert_eq!(
+        main_returning_fails_with(
+            "i64",
+            "let min: i64 = -9223372036854775808;\nreturn min / -1;"
+        ),
+        overflow("/", "i64")
+    );
 }
 
 #[test]

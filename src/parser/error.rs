@@ -11,7 +11,8 @@ pub enum ParseErrorKind {
         found: TokenKind,
     },
     InvalidAssignmentTarget,
-    /// The digits lexed fine, but don't fit in a 64-bit signed integer.
+    /// The digits lexed fine, but their value does not fit in 64 bits,
+    /// so no integer type could ever hold it.
     InvalidIntegerLiteral {
         lexeme: String,
     },
@@ -35,7 +36,9 @@ impl ParseError {
             }
             ParseErrorKind::InvalidAssignmentTarget => "invalid assignment target".to_string(),
             ParseErrorKind::InvalidIntegerLiteral { lexeme } => {
-                format!("integer literal '{lexeme}' is out of range for a 64-bit integer")
+                format!(
+                    "integer literal '{lexeme}' is too large: its value does not fit in 64 bits"
+                )
             }
         }
     }

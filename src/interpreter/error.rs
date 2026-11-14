@@ -24,7 +24,7 @@ pub enum RuntimeErrorKind {
     /// checker rejects such programs before they run; the interpreter
     /// still reports it rather than crash, should it ever be given an
     /// unchecked program.
-    IntegerLiteralOutOfRange { value: i64, ty: &'static str },
+    IntegerLiteralOutOfRange { value: i128, ty: &'static str },
     /// A binary operator was applied to kinds of value it is not defined
     /// for, such as `1 + true` or `"a" - "b"`. The type checker rejects
     /// such programs before they run; like the errors below, this is the

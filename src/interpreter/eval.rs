@@ -423,7 +423,9 @@ impl<'p> Interpreter<'p> {
     /// returned with the span of the expression that failed.
     pub fn evaluate(&mut self, expr: &Expression) -> Result<Value, RuntimeError> {
         match expr {
-            Expression::Integer(value, _) => self.evaluate_integer_literal(expr, *value),
+            Expression::Integer(value, _) => {
+                self.evaluate_integer_literal(expr, i128::from(*value))
+            }
             Expression::String(value, _) => Ok(Value::String(value.clone())),
             Expression::Boolean(value, _) => Ok(Value::Boolean(*value)),
             Expression::Identifier(name, span) => self.evaluate_identifier(name, *span),
@@ -467,10 +469,10 @@ impl<'p> Interpreter<'p> {
     fn evaluate_integer_literal(
         &self,
         literal: &Expression,
-        value: i64,
+        value: i128,
     ) -> Result<Value, RuntimeError> {
         let ty = self.types.type_of(literal).unwrap_or(Type::I32);
-        integer_value(i128::from(value), ty).ok_or_else(|| {
+        integer_value(value, ty).ok_or_else(|| {
             RuntimeError::new(
                 RuntimeErrorKind::IntegerLiteralOutOfRange {
                     value,

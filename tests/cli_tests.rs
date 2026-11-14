@@ -195,6 +195,30 @@ fn check_requires_a_dijk_source_file() {
     assert!(stderr_of(&output).contains("is not a Dijk source file"));
 }
 
+#[test]
+fn check_shows_windows_line_endings_without_a_carriage_return() {
+    let path = scratch_file(
+        "crlf-type-error",
+        "fn main() -> i32 {\r\n    let x: i32 = \"hello\";\r\n    return x;\r\n}\r\n",
+    );
+    let output = run(&["check", &path]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr_of(&output);
+    assert!(!stderr.contains('\r'), "{stderr:?}");
+    assert!(stderr.contains("2 |     let x: i32 = \"hello\";\n  |                  ^^^^^^^\n"));
+}
+
+#[test]
+fn a_non_ascii_character_is_reported_once() {
+    let output = run_source("non-ascii", "fn main() {\n    let café = 1;\n}\n");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr_of(&output);
+    assert_eq!(stderr.matches("error:").count(), 1, "{stderr}");
+    assert!(stderr.starts_with("error: unexpected character 'é' (U+00E9)\n"));
+    assert!(stderr.contains(" --> "));
+    assert!(stderr.ends_with("2 |     let café = 1;\n  |            ^\n"));
+}
+
 // --- dijk check --types ---
 
 #[test]

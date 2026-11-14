@@ -7,6 +7,21 @@
 //! the type checker and the interpreter say `semantic error:`,
 //! `type error[E…]:` and `runtime error:`. The label tells a reader
 //! *which* stage rejected the program.
+//!
+//! # Positions
+//!
+//! Spans are byte offsets, but a reader counts characters. `é` is two
+//! bytes in UTF-8 and one character on screen, so line and column numbers
+//! are counted in characters, and so is the indentation of the caret. A
+//! tab counts as one column, and under the source line the caret is
+//! indented with a tab wherever the source line has one, so the two lines
+//! expand to the same width in any terminal. A file with Windows line
+//! endings (`\r\n`) shows its lines without the `\r`.
+//!
+//! One limit remains: a character that a terminal draws two columns wide
+//! (most CJK characters and emoji) still counts as one, so a caret after
+//! one sits a column early. Measuring display width needs Unicode width
+//! tables, which Dijk Core does not carry.
 
 use crate::lexer::token::Span;
 
@@ -55,8 +70,15 @@ pub fn render_with_notes(
     notes: &[String],
 ) -> String {
     let location = locate(source, span.start);
-    let line_end = location.line_start + location.text.len();
-    let width = span.end.min(line_end).saturating_sub(span.start).max(1);
+
+    // Count the characters of the span that lie on its first line.
+    let span_bytes = span.end.saturating_sub(span.start);
+    let rest_of_line = &location.text[location.before.len()..];
+    let width = rest_of_line
+        .char_indices()
+        .take_while(|(offset, _)| *offset < span_bytes)
+        .count()
+        .max(1);
 
     let mut rendered = header(file, &location, label, message);
     rendered.push_str(&marker_line(&location, width));
@@ -78,12 +100,12 @@ pub fn line_and_column(source: &str, offset: usize) -> (usize, usize) {
 struct Location<'s> {
     /// 1-based line number.
     line: usize,
-    /// 1-based column.
+    /// 1-based column, counted in characters.
     column: usize,
-    /// Byte offset at which the line starts.
-    line_start: usize,
-    /// The full text of the line, without its newline.
+    /// The full text of the line, without its line break (`\n` or `\r\n`).
     text: &'s str,
+    /// The part of `text` before the offset.
+    before: &'s str,
 }
 
 impl Location<'_> {
@@ -106,11 +128,18 @@ fn header(file: &str, location: &Location, label: &str, message: &str) -> String
 }
 
 /// The line under the source line: `width` carets under the problem.
+/// The indentation has one space per character before the problem, or a
+/// tab where the source line has a tab, so the carets line up however
+/// wide the terminal draws a tab.
 fn marker_line(location: &Location, width: usize) -> String {
+    let indent: String = location
+        .before
+        .chars()
+        .map(|c| if c == '\t' { '\t' } else { ' ' })
+        .collect();
     format!(
         "{pad} | {indent}{carets}\n",
         pad = " ".repeat(location.gutter()),
-        indent = " ".repeat(location.column.saturating_sub(1)),
         carets = "^".repeat(width),
     )
 }
@@ -118,6 +147,7 @@ fn marker_line(location: &Location, width: usize) -> String {
 /// Given a byte offset into `source`, find its 1-based line and column,
 /// and the full text of the line it falls on.
 fn locate(source: &str, offset: usize) -> Location<'_> {
+    let offset = offset.min(source.len());
     let mut line = 1;
     let mut line_start = 0;
 
@@ -136,10 +166,24 @@ fn locate(source: &str, offset: usize) -> Location<'_> {
         .map(|i| line_start + i)
         .unwrap_or(source.len());
 
+    // With Windows line endings, every line ends in `\r\n`. The `\r` is
+    // part of the line break, not of the line.
+    let full_line = &source[line_start..line_end];
+    let text = full_line.strip_suffix('\r').unwrap_or(full_line);
+
+    // Spans always start on a character boundary (the lexer makes sure of
+    // it). Should one ever not, back up to the boundary before it rather
+    // than fail.
+    let mut prefix_len = (offset - line_start).min(text.len());
+    while !text.is_char_boundary(prefix_len) {
+        prefix_len -= 1;
+    }
+    let before = &text[..prefix_len];
+
     Location {
         line,
-        column: offset - line_start + 1,
-        line_start,
-        text: &source[line_start..line_end],
+        column: before.chars().count() + 1,
+        text,
+        before,
     }
 }

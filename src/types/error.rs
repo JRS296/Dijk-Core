@@ -95,7 +95,7 @@ pub enum TypeErrorKind {
     /// E0010. An integer literal whose value does not fit in the type it
     /// was given, such as `3000000000` where an `i32` is expected.
     /// `value` includes a minus sign written directly before the digits.
-    IntegerLiteralOutOfRange { value: i64, ty: Type },
+    IntegerLiteralOutOfRange { value: i128, ty: Type },
 }
 
 /// A type error: which rule was broken, and where.

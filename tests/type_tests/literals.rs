@@ -48,6 +48,13 @@ fn the_extremes_of_i64_fit_in_an_i64_context() {
 }
 
 #[test]
+fn the_smallest_i64_can_be_written_as_a_literal() {
+    // Like `-2147483648` for `i32`, its minus sign is part of the literal.
+    let source = in_main("let min: i64 = -9223372036854775808;");
+    assert_eq!(type_of(&source, "-9223372036854775808"), Type::I64);
+}
+
+#[test]
 fn a_literal_too_big_for_i32_fits_in_an_i64_context() {
     well_typed(&in_main("let big: i64 = 3000000000;"));
 }
@@ -62,6 +69,22 @@ fn one_past_the_largest_i32_is_out_of_range() {
 #[test]
 fn one_past_the_smallest_i32_is_out_of_range() {
     assert_eq!(codes(&in_main("let x = -2147483649;")), vec!["E0010"]);
+}
+
+#[test]
+fn the_i64_range_is_checked_by_the_type_checker() {
+    // The parser reads any literal that fits in 64 bits; only the type
+    // checker, which knows the sign and the type, can say it fits.
+    assert_eq!(
+        codes(&in_main(
+            "let a: i64 = 9223372036854775808;\nlet b: i64 = -9223372036854775809;\nlet c: i64 = 18446744073709551615;"
+        )),
+        vec!["E0010", "E0010", "E0010"]
+    );
+    assert_eq!(
+        codes(&in_main("let d = -9223372036854775808;")),
+        vec!["E0010"]
+    );
 }
 
 #[test]

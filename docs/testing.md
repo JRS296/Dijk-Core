@@ -187,6 +187,9 @@ Lexer cases, matching the categories in `docs/lexer.md`:
 | Line comment | `let x = 1; // comment` |
 | Unexpected character (error) | `let x = 42 @ 10;` |
 | Unterminated string (error) | `"never closed` |
+| Non-ASCII text in a string or comment (valid) | `let s = "café"; // ☕` |
+| Non-ASCII character elsewhere (error, reported once) | `let café = 1;` → `unexpected character 'é' (U+00E9)` |
+| Windows line endings | save any file with CRLF: diagnostics show no `\r` |
 
 Parser cases, matching the categories in `docs/parser.md`:
 
@@ -238,6 +241,7 @@ run nothing:
 | Unknown type name | `fn main() { let x: banana = 1; }` | E0008 |
 | Missing return on some path | `fn main() -> i32 { if true { return 1; } }` | E0009 |
 | Literal out of range | `fn main() { let x = 3000000000; }` | E0010 |
+| Smallest `i64` literal (valid) | `fn main() -> i64 { return -9223372036854775808; }` prints `-9223372036854775808` | — |
 | A well-typed `--types` listing | `fn main() -> i64 { let big: i64 = 2; let sum = big + 3; return sum; }` | `sum : i64` |
 
 Execution cases (`docs/interpreter.md`), each the body of a

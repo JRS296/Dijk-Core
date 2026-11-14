@@ -306,7 +306,7 @@ fn what_counts_as_an_integer_literal() {
 
 // --- literal ranges ---
 
-fn out_of_range(value: i64, ty: Type) -> TypeErrorKind {
+fn out_of_range(value: i128, ty: Type) -> TypeErrorKind {
     TypeErrorKind::IntegerLiteralOutOfRange { value, ty }
 }
 
@@ -1659,6 +1659,19 @@ fn an_unknown_type_lists_the_types_that_exist() {
     assert!(rendered("fn f() -> unit {}\n\nfn main() {}\n").ends_with(
         "  = note: the types that can be written are `i32`, `i64`, `bool` and `string`\n  = note: `unit` cannot be written; leave out `-> T` for a function that returns nothing\n"
     ));
+}
+
+#[test]
+fn the_underline_counts_characters_not_bytes() {
+    // `"héllo"` is 8 bytes but 7 characters wide, and the column of the
+    // `2` after it counts `é` once.
+    let source = "fn main() {\n    let s: i32 = \"héllo\";\n    let t: bool = 2;\n}\n";
+    let errors = type_errors(source);
+    let first = errors[0].render("main.dk", source);
+    assert!(first.contains("2 |     let s: i32 = \"héllo\";\n  |                  ^^^^^^^\n"));
+    let line = "fn main() {\n    let s = \"é\"; let t: bool = 2;\n}\n";
+    let second = type_errors(line)[0].render("main.dk", line);
+    assert!(second.contains(" --> main.dk:2:32\n"), "{second}");
 }
 
 #[test]

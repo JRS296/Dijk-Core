@@ -244,7 +244,7 @@ fn statement_span_accessor_covers_every_variant() {
 
 // --- traversal over hand-built trees ---
 
-struct IntegerCollector(Vec<i64>);
+struct IntegerCollector(Vec<u64>);
 
 impl Visitor for IntegerCollector {
     fn visit_expression(&mut self, expr: &Expression) {
@@ -316,7 +316,7 @@ fn visiting_a_program_reaches_every_function_and_its_nested_expressions() {
     // visit_function -> visit_statement -> visit_expression — starting
     // from the root, not from an already-unwrapped node.
     let s = span(0, 0);
-    let make_function = |name: &str, value: i64| Function {
+    let make_function = |name: &str, value: u64| Function {
         name: name.to_string(),
         params: vec![],
         return_type: None,

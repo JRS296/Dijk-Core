@@ -21,6 +21,11 @@ impl LexError {
 
     fn message(&self) -> String {
         match self.kind {
+            // A non-ASCII character may be invisible (a non-breaking
+            // space) or look like an ASCII one, so its code point is shown.
+            LexErrorKind::UnexpectedCharacter(c) if !c.is_ascii() => {
+                format!("unexpected character '{c}' (U+{:04X})", u32::from(c))
+            }
             LexErrorKind::UnexpectedCharacter(c) => format!("unexpected character '{c}'"),
             LexErrorKind::UnterminatedString => "unterminated string literal".to_string(),
         }

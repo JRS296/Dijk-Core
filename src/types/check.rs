@@ -453,7 +453,9 @@ impl Checker {
     /// again.
     fn check_expression(&mut self, expr: &Expression, expected: Option<Type>) -> Type {
         let ty = match expr {
-            Expression::Integer(value, _) => self.check_integer_literal(expr, *value, expected),
+            Expression::Integer(value, _) => {
+                self.check_integer_literal(expr, i128::from(*value), expected)
+            }
             Expression::String(..) => Type::String,
             Expression::Boolean(..) => Type::Bool,
             Expression::Unary {
@@ -564,7 +566,7 @@ impl Checker {
     fn check_integer_literal(
         &mut self,
         expr: &Expression,
-        value: i64,
+        value: i128,
         expected: Option<Type>,
     ) -> Type {
         let (ty, check_range) = match expected {
@@ -735,17 +737,15 @@ fn statement_always_returns(stmt: &Statement) -> bool {
 /// The interpreter uses this same function, so that the two stages agree
 /// on what a literal is: a literal the checker accepted as an `i32` is
 /// also built as one at run time, without first building its digits.
-pub fn literal_value(expr: &Expression) -> Option<i64> {
+pub fn literal_value(expr: &Expression) -> Option<i128> {
     match expr {
-        Expression::Integer(value, _) => Some(*value),
+        Expression::Integer(value, _) => Some(i128::from(*value)),
         Expression::Unary {
             operator: UnaryOperator::Neg,
             operand,
             ..
         } => match operand.as_ref() {
-            // The parser only produces non-negative literals, so the
-            // negation always fits in an `i64`.
-            Expression::Integer(value, _) => Some(-*value),
+            Expression::Integer(value, _) => Some(-i128::from(*value)),
             _ => None,
         },
         _ => None,
@@ -753,10 +753,14 @@ pub fn literal_value(expr: &Expression) -> Option<i64> {
 }
 
 /// Whether `value` can be represented in the integer type `ty`.
-fn fits(value: i64, ty: Type) -> bool {
+///
+/// A literal's value is held as an `i128`, which can hold every value a
+/// literal can have: 64 bits of digits, with or without a minus sign.
+fn fits(value: i128, ty: Type) -> bool {
     match ty {
         Type::I32 => i32::try_from(value).is_ok(),
-        // The parser has already rejected any literal beyond `i64`.
+        Type::I64 => i64::try_from(value).is_ok(),
+        // Not an integer type: the literal is not range-checked.
         _ => true,
     }
 }

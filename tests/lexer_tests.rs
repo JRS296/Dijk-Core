@@ -182,6 +182,89 @@ fn diagnostic_rendering_points_at_the_offending_character() {
     assert!(rendered.contains("let x = 42 @ 10;"));
 }
 
+// --- non-ASCII source text ---
+//
+// Dijk's lexical grammar is ASCII, but source files are UTF-8, and a
+// non-ASCII character is several bytes long.
+
+#[test]
+fn a_non_ascii_character_outside_a_string_is_one_error() {
+    let source = "let é = 1;";
+    let (tokens, errors) = tokenize(source);
+    // One error, for the character itself, covering both of its bytes.
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, LexErrorKind::UnexpectedCharacter('é'));
+    assert_eq!((errors[0].span.start, errors[0].span.end), (4, 6));
+    // Lexing carries on right after it.
+    let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::Let,
+            TokenKind::Equal,
+            TokenKind::Integer,
+            TokenKind::Semicolon,
+            TokenKind::Eof
+        ]
+    );
+}
+
+#[test]
+fn non_ascii_text_is_fine_inside_strings_and_comments() {
+    let (tokens, errors) = tokenize("let s = \"héllo, 世界\"; // café ☕\nlet t = 1;");
+    assert!(errors.is_empty(), "unexpected lex errors: {errors:?}");
+    assert_eq!(tokens[3].lexeme, "héllo, 世界");
+    assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
+}
+
+#[test]
+fn a_non_breaking_space_is_not_whitespace() {
+    // An easy character to paste by accident, and invisible: its code
+    // point is shown.
+    let source = "let x = 1\u{a0}+ 2;";
+    let (_, errors) = tokenize(source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, LexErrorKind::UnexpectedCharacter('\u{a0}'));
+    assert_eq!(
+        errors[0].to_string(),
+        "unexpected character '\u{a0}' (U+00A0)"
+    );
+}
+
+// --- positions in diagnostics ---
+
+#[test]
+fn columns_count_characters_not_bytes() {
+    // `é` is two bytes but one character: the `@` is in column 16 (its
+    // byte offset would say 17), and the caret sits under it.
+    let source = "let s = \"é\"; x @ 1;";
+    let (_, errors) = tokenize(source);
+    let rendered = errors[0].render("example.dk", source);
+    assert!(rendered.contains(" --> example.dk:1:16\n"));
+    assert!(rendered.ends_with("1 | let s = \"é\"; x @ 1;\n  |                ^\n"));
+}
+
+#[test]
+fn windows_line_endings_are_not_shown() {
+    let source = "fn main() {\r\n    let x = 1 @ 2;\r\n}\r\n";
+    let (_, errors) = tokenize(source);
+    let rendered = errors[0].render("example.dk", source);
+    assert!(!rendered.contains('\r'), "{rendered:?}");
+    assert!(rendered.contains(" --> example.dk:2:15\n"));
+    assert!(rendered.ends_with("2 |     let x = 1 @ 2;\n  |               ^\n"));
+}
+
+#[test]
+fn a_tab_before_the_problem_is_mirrored_under_it() {
+    // The source line starts with a tab, so the caret line does too:
+    // however wide the terminal draws a tab, the caret lines up.
+    let source = "\tlet x = 1 @ 2;";
+    let (_, errors) = tokenize(source);
+    let rendered = errors[0].render("example.dk", source);
+    assert!(rendered.contains(" --> example.dk:1:12\n"));
+    assert!(rendered.ends_with("1 | \tlet x = 1 @ 2;\n  | \t          ^\n"));
+}
+
 #[test]
 fn token_descriptions_are_human_readable() {
     assert_eq!(TokenKind::RightParen.describe(), "')'");

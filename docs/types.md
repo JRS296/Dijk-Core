@@ -150,14 +150,19 @@ operand of a binary operator (below).
 **Range.** A literal's value must fit in its type, or it is E0010:
 
 ```text
-let a = 2147483647;          fine: the largest i32
-let b = 2147483648;          type error[E0010]: integer literal out of range
-let c: i64 = 2147483648;     fine: an i64
+let a = 2147483647;                      fine: the largest i32
+let b = 2147483648;                      type error[E0010]: integer literal out of range
+let c: i64 = 2147483648;                 fine: an i64
+let d: i64 = 9223372036854775808;        type error[E0010]: one past the largest i64
 ```
 
 A minus sign written directly before digits is **part of the literal**,
 so `-2147483648`, the smallest `i32`, is accepted even though the parser
-reads it as `-` applied to `2147483648`, which alone would not fit.
+reads it as `-` applied to `2147483648`, which alone would not fit. The
+same goes for `-9223372036854775808`, the smallest `i64`. The parser
+reads any digits that fit in 64 bits (unsigned), and the range check is
+left entirely to the type checker, the one stage that knows both the
+literal's sign and its type.
 Parentheses leave no trace in the AST, so `-(2147483648)` is the same
 literal. `--5` and `0 - 5` are operations on literals, not literals.
 
@@ -439,6 +444,14 @@ Only type errors have codes. Lexical and parse errors keep the label
 keeps `runtime error:`. Those stages also keep a single caret at the
 start of the problem.
 
+Every stage reports positions the same way. Lines and columns count
+**characters**, not bytes (`é` is one column), and the underline is
+measured in characters too. A tab counts as one column, and the caret
+line repeats the source line's tabs, so the two line up in any terminal.
+A file with Windows line endings is shown without its `\r`. The one
+remaining limit: characters a terminal draws two columns wide (most CJK
+characters and emoji) still count as one.
+
 ## `dijk check`
 
 ```text
@@ -563,9 +576,6 @@ purpose:
   side is checked first, as an `i32`); `x == 1 + 2` is accepted.
 - **Return paths are judged from shape alone.** A `while` never counts as
   returning, even `while true`.
-- **`i64::MIN` cannot be written as a literal.** The parser rejects the
-  digits `9223372036854775808` before the minus sign is seen. Write
-  `-9223372036854775807 - 1`.
 - **Diagnostics underline only the first line of a span**, and a span
   that starts or ends inside parentheses excludes them (`!(a == b)` is
   underlined without its closing `)`).
