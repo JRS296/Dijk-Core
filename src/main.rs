@@ -1,9 +1,10 @@
 //! Dijk Core CLI.
 //!
 //! There is no compiler yet. Dijk Core can lex, parse and build an AST,
-//! check what names refer to (semantic analysis), and run a program with
-//! a tree-walking interpreter. This binary is the entry point for
-//! observing each of those stages as it is built.
+//! check what names refer to (semantic analysis), check that every
+//! operation is valid for the types it is applied to (type checking),
+//! and run a program with a tree-walking interpreter. This binary is the
+//! entry point for observing each of those stages as it is built.
 
 mod ast;
 mod diagnostics;
@@ -12,8 +13,8 @@ mod lexer;
 mod parser;
 mod pretty;
 mod semantic;
-// The type checker is built up over several commits before any command
-// uses it; `dijk check` and `dijk run` are wired to it once it is complete.
+// The expression types the type checker records have no consumer yet:
+// the interpreter does not yet tell `i32` values from `i64` ones.
 #[allow(dead_code)]
 mod types;
 
@@ -37,7 +38,10 @@ COMMANDS:
     lex <file>   Print the token stream for a Dijk source file (.dk or .dijk)
     parse <file> Print the AST for a Dijk source file (.dk or .dijk)
     ast <file>   Print the AST plus node counts, for the same file
-    run <file>   Run a Dijk program and print the value its main returns
+    check <file> Check a program through every stage up to type checking,
+                 without running it
+    run <file>   Check a program, then run it and print the value its
+                 main returns
 ";
 
 fn main() {
@@ -71,6 +75,14 @@ fn main() {
             };
             ast(&path);
         }
+        Some("check") => {
+            let Some(path) = args.next() else {
+                eprintln!("dijk: 'check' requires a file argument");
+                eprintln!("usage: dijk check <file>");
+                std::process::exit(1);
+            };
+            check(&path);
+        }
         Some("run") => {
             let Some(path) = args.next() else {
                 eprintln!("dijk: 'run' requires a file argument");
@@ -91,7 +103,7 @@ fn doctor() {
     println!("Dijk toolchain");
     println!("Version: {VERSION}");
     println!(
-        "Status: Bootstrap development (lexer, parser, AST, semantic analysis, and interpreter implemented)"
+        "Status: Bootstrap development (lexer, parser, AST, semantic analysis, type checker, and interpreter implemented)"
     );
     println!("Compiler: Not yet implemented (programs run on the interpreter: dijk run)");
 }
@@ -195,18 +207,91 @@ fn ast(path: &str) {
     }
 }
 
+/// How wide the stage-name column of `dijk check`'s report is.
+const STAGE_COLUMN: usize = 23;
+
+/// Check a program through every stage before execution, reporting how
+/// each one went, and never run it:
+///
+/// ```text
+/// Checking main.dk...
+/// Lexical analysis       OK
+/// Parsing                OK
+/// Semantic analysis      OK
+/// Type checking          OK
+///
+/// Program is well-typed.
+/// ```
+///
+/// The report stops at the first stage that fails, marked `FAILED` with
+/// its number of errors, and that stage's diagnostics go to stderr, as
+/// with every other command. Exit code 0 means the program is well-typed
+/// (which says nothing about whether it will run without a runtime
+/// error); 1 means some stage rejected it.
+fn check(path: &str) {
+    let source = read_source_file(path);
+    println!("Checking {path}...");
+
+    let (tokens, lex_errors) = lexer::tokenize(&source);
+    if !lex_errors.is_empty() {
+        let diagnostics = lex_errors.iter().map(|e| e.render(path, &source));
+        fail_stage("Lexical analysis", diagnostics.collect());
+    }
+    pass_stage("Lexical analysis");
+
+    let (program, parse_errors) = parser::parse(tokens);
+    if !parse_errors.is_empty() {
+        let diagnostics = parse_errors.iter().map(|e| e.render(path, &source));
+        fail_stage("Parsing", diagnostics.collect());
+    }
+    pass_stage("Parsing");
+
+    let semantic_errors = semantic::analyze(&program);
+    if !semantic_errors.is_empty() {
+        let diagnostics = semantic_errors.iter().map(|e| e.render(path, &source));
+        fail_stage("Semantic analysis", diagnostics.collect());
+    }
+    pass_stage("Semantic analysis");
+
+    if let Err(type_errors) = types::check(&program) {
+        let diagnostics = type_errors.iter().map(|e| e.render(path, &source));
+        fail_stage("Type checking", diagnostics.collect());
+    }
+    pass_stage("Type checking");
+
+    println!();
+    println!("Program is well-typed.");
+}
+
+fn pass_stage(stage: &str) {
+    println!("{stage:<STAGE_COLUMN$}OK");
+}
+
+/// Report `stage` as failed with the given rendered diagnostics, print
+/// them, and exit: no later stage runs.
+fn fail_stage(stage: &str, diagnostics: Vec<String>) -> ! {
+    let count = diagnostics.len();
+    let noun = if count == 1 { "error" } else { "errors" };
+    println!("{stage:<STAGE_COLUMN$}FAILED ({count} {noun})");
+    for diagnostic in &diagnostics {
+        eprint!("{diagnostic}");
+    }
+    std::process::exit(1);
+}
+
 /// Run a program through every stage in turn:
 ///
 /// ```text
-/// lex → parse → semantic analysis → interpret
+/// lex → parse → semantic analysis → type checking → interpret
 /// ```
 ///
 /// Each stage runs only if every stage before it succeeded. A program
 /// with lexical or parse errors is never analyzed (its AST would be
-/// partial), and a program with semantic errors is never executed. On
-/// success, the value `main` returns is printed on its own line (nothing
-/// is printed if it returns no value) and the exit code is 0. Any error,
-/// from any stage, exits with 1.
+/// partial), a program with semantic errors is never type-checked, and a
+/// program with type errors is never executed. On success, the value
+/// `main` returns is printed on its own line (nothing is printed if it
+/// returns no value) and the exit code is 0. Any error, from any stage,
+/// exits with 1.
 fn run(path: &str) {
     let source = read_source_file(path);
     let (tokens, lex_errors) = lexer::tokenize(&source);
@@ -231,6 +316,15 @@ fn run(path: &str) {
 
     if !semantic_errors.is_empty() {
         for error in &semantic_errors {
+            eprint!("{}", error.render(path, &source));
+        }
+        std::process::exit(1);
+    }
+
+    // A program with type errors must not run at all: the type checker,
+    // not the interpreter, decides whether its operations are valid.
+    if let Err(type_errors) = types::check(&program) {
+        for error in &type_errors {
             eprint!("{}", error.render(path, &source));
         }
         std::process::exit(1);

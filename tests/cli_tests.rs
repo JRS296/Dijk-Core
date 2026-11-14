@@ -1,8 +1,8 @@
 //! End-to-end tests that run the built `dijk` binary, rather than calling
 //! the compiler's modules directly. These cover CLI-level concerns that
 //! the module-level tests don't: file extension handling, the actual
-//! `dijk lex` / `dijk parse` / `dijk run` output a user would see, and
-//! exit codes.
+//! `dijk lex` / `dijk parse` / `dijk check` / `dijk run` output a user
+//! would see, and exit codes.
 
 use std::process::Command;
 
@@ -98,6 +98,99 @@ fn parse_and_ast_show_which_let_bindings_are_mutable() {
     }
 }
 
+// --- dijk check ---
+
+const WELL_TYPED_REPORT: &str = "Lexical analysis       OK\nParsing                OK\nSemantic analysis      OK\nType checking          OK\n\nProgram is well-typed.\n";
+
+#[test]
+fn check_reports_every_stage_for_a_well_typed_program() {
+    let output = run(&["check", "examples/add.dk"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout_of(&output),
+        format!("Checking examples/add.dk...\n{WELL_TYPED_REPORT}")
+    );
+    assert_eq!(stderr_of(&output), "");
+}
+
+#[test]
+fn check_accepts_dk_and_dijk_identically() {
+    let dk = run(&["check", "examples/hello.dk"]);
+    let dijk = run(&["check", "examples/hello.dijk"]);
+    assert_eq!(dk.status.code(), Some(0));
+    assert_eq!(dijk.status.code(), Some(0));
+    assert!(stdout_of(&dk).ends_with(WELL_TYPED_REPORT));
+    assert!(stdout_of(&dijk).ends_with(WELL_TYPED_REPORT));
+}
+
+#[test]
+fn check_fails_with_exit_1_on_a_type_error() {
+    let output = run(&["check", "examples/type_error.dk"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stdout_of(&output),
+        "Checking examples/type_error.dk...\nLexical analysis       OK\nParsing                OK\nSemantic analysis      OK\nType checking          FAILED (1 error)\n"
+    );
+    let stderr = stderr_of(&output);
+    assert!(stderr.starts_with("type error: mismatched types: expected `i32`, found `string`\n"));
+    assert!(stderr.contains(" --> examples/type_error.dk:2:18"));
+}
+
+#[test]
+fn check_stops_at_the_first_stage_that_fails() {
+    for (fixture, last_line) in [
+        (
+            "examples/unexpected_character.dk",
+            "Lexical analysis       FAILED (1 error)\n",
+        ),
+        (
+            "examples/parse_error.dk",
+            "Parsing                FAILED (1 error)\n",
+        ),
+        (
+            "examples/semantic_error.dk",
+            "Semantic analysis      FAILED (1 error)\n",
+        ),
+    ] {
+        let output = run(&["check", fixture]);
+        assert_eq!(output.status.code(), Some(1), "{fixture}");
+        let stdout = stdout_of(&output);
+        assert!(stdout.ends_with(last_line), "{fixture}: {stdout}");
+        assert!(!stdout.contains("Type checking"), "{fixture}");
+    }
+}
+
+#[test]
+fn check_never_runs_the_program() {
+    // Well-typed, but dividing by zero when run: `check` accepts it.
+    let output = run(&["check", "examples/runtime_error.dk"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout_of(&output).ends_with("Program is well-typed.\n"));
+    assert!(!stderr_of(&output).contains("runtime error"));
+}
+
+#[test]
+fn check_reports_every_type_error() {
+    let path = scratch_file(
+        "two-type-errors",
+        "fn main() -> i32 {\n    let a: bool = 1;\n    return \"a\" + 1;\n}\n",
+    );
+    let output = run(&["check", &path]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout_of(&output).ends_with("Type checking          FAILED (2 errors)\n"));
+    assert_eq!(stderr_of(&output).matches("type error:").count(), 2);
+}
+
+#[test]
+fn check_requires_a_dijk_source_file() {
+    let output = run(&["check"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr_of(&output).contains("usage: dijk check <file>"));
+    let output = run(&["check", "examples/hello.txt"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr_of(&output).contains("is not a Dijk source file"));
+}
+
 // --- dijk run ---
 
 #[test]
@@ -143,6 +236,36 @@ fn run_reports_a_runtime_error_with_its_call_stack() {
     assert!(stderr.starts_with("runtime error: division by zero\n"));
     assert!(stderr.contains(" --> examples/runtime_error.dk:2:16"));
     assert!(stderr.ends_with("note: call stack: divide ← main\n"));
+}
+
+#[test]
+fn run_rejects_a_type_error_before_executing_anything() {
+    let output = run(&["run", "examples/type_error.dk"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout_of(&output), "");
+    assert!(stderr_of(&output)
+        .starts_with("type error: mismatched types: expected `i32`, found `string`\n"));
+}
+
+#[test]
+fn run_does_not_execute_a_program_with_a_type_error_anywhere() {
+    // Running this would divide by zero first. It is never run: the type
+    // error two lines later stops it before execution begins.
+    let output = run_source(
+        "type-error-after-runtime-error",
+        "fn main() -> i32 {\n    let x = 1 / 0;\n    let y: i32 = \"late\";\n    return x;\n}\n",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr_of(&output);
+    assert!(stderr.starts_with("type error:"));
+    assert!(!stderr.contains("runtime error"));
+}
+
+#[test]
+fn run_executes_a_well_typed_program() {
+    let output = run(&["run", "examples/add.dk"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout_of(&output), "30\n");
 }
 
 #[test]

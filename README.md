@@ -150,6 +150,7 @@ Program
 └── Function
     ├── Name: main
     ├── Parameters: []
+    ├── Return type: i32
     └── Body
         ├── Let
         │   ├── Name: x
@@ -188,7 +189,7 @@ fn factorial(n: i32) -> i32 {
     return n * factorial(n - 1);
 }
 
-fn main() {
+fn main() -> i32 {
     return factorial(5);
 }
 ```
