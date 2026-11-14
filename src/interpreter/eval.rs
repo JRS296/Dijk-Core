@@ -114,6 +114,30 @@
 //!
 //! Blocks and loops pass a `Return` outward untouched. Only a function
 //! call consumes it, turning it into the value of the call expression.
+//!
+//! # Integers
+//!
+//! `42` could be an `i32` or an `i64`: the type checker decided which,
+//! from context, and recorded it in the [`TypedProgram`]. Evaluating a
+//! literal looks that decision up and builds a value of that type. This
+//! is the only place the interpreter needs the checker's results. Every
+//! other integer is the result of an operation, and so has the type of
+//! that operation's operands.
+//!
+//! Integer arithmetic is defined by Dijk, not inherited from whatever
+//! Rust happens to do:
+//!
+//! ```text
+//! 1. compute the true, mathematical result (exactly, in a wider type)
+//! 2. if it fits in the operands' type, that is the result
+//! 3. otherwise it is a runtime error: integer overflow
+//! ```
+//!
+//! So `2147483647 + 1` is an overflow for `i32` operands but fine for
+//! `i64` ones, and nothing ever silently wraps around. Division truncates
+//! toward zero (`-7 / 2` is `-3`), dividing by zero is a runtime error,
+//! and the smallest integer divided by `-1` is an overflow, since the
+//! true result is one more than the largest.
 
 use super::environment::Environment;
 use super::error::{RuntimeError, RuntimeErrorKind};
@@ -122,6 +146,8 @@ use crate::ast::declaration::{Declaration, Function, Program};
 use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use crate::ast::statement::Statement;
 use crate::lexer::token::Span;
+use crate::types::ty::Type;
+use crate::types::{self, TypedProgram};
 use std::collections::HashMap;
 
 /// The most calls that may be in progress at once, `main` included.
@@ -149,6 +175,9 @@ struct CallFrame<'p> {
 pub struct Interpreter<'p> {
     /// The global scope: every function in the program, by name.
     functions: HashMap<&'p str, &'p Function>,
+    /// What the type checker recorded about the program: here, the type
+    /// it gave each integer literal.
+    types: &'p TypedProgram,
     /// Every call in progress, outermost (`main`) first. The top frame
     /// is the running call, and its environment is the one statements
     /// and expressions read and write.
@@ -156,10 +185,11 @@ pub struct Interpreter<'p> {
 }
 
 impl<'p> Interpreter<'p> {
-    /// Prepare to run `program`: enter every function into the global
-    /// scope. If two functions share a name the first one wins, matching
-    /// what semantic analysis resolves calls to (and reports as an error).
-    pub fn new(program: &'p Program) -> Self {
+    /// Prepare to run `program`, which the type checker described in
+    /// `types`: enter every function into the global scope. If two
+    /// functions share a name the first one wins, matching what semantic
+    /// analysis resolves calls to (and reports as an error).
+    pub fn new(program: &'p Program, types: &'p TypedProgram) -> Self {
         let mut functions = HashMap::new();
         for declaration in &program.declarations {
             let Declaration::Function(function) = declaration;
@@ -168,6 +198,7 @@ impl<'p> Interpreter<'p> {
 
         Self {
             functions,
+            types,
             call_stack: Vec::new(),
         }
     }
@@ -356,9 +387,9 @@ impl<'p> Interpreter<'p> {
                 }
                 Ok(Execution::Normal)
             }
-            // `return;` with no value returns `Unit`. (Whether the
-            // function declared a return type is not checked: that is the
-            // type checker's job.)
+            // `return;` with no value returns `Unit`. (The type checker has
+            // made sure that only happens in a function that returns
+            // `unit`.)
             Statement::Return { value, .. } => {
                 let value = match value {
                     Some(value) => self.evaluate(value)?,
@@ -392,7 +423,7 @@ impl<'p> Interpreter<'p> {
     /// returned with the span of the expression that failed.
     pub fn evaluate(&mut self, expr: &Expression) -> Result<Value, RuntimeError> {
         match expr {
-            Expression::Integer(value, _) => Ok(Value::Integer(*value)),
+            Expression::Integer(value, _) => self.evaluate_integer_literal(expr, *value),
             Expression::String(value, _) => Ok(Value::String(value.clone())),
             Expression::Boolean(value, _) => Ok(Value::Boolean(*value)),
             Expression::Identifier(name, span) => self.evaluate_identifier(name, *span),
@@ -401,6 +432,11 @@ impl<'p> Interpreter<'p> {
                 operand,
                 span,
             } => {
+                // `-42` is a single, negative literal, not `-` applied to
+                // `42` (see `types::literal_value`).
+                if let Some(value) = types::literal_value(expr) {
+                    return self.evaluate_integer_literal(expr, value);
+                }
                 let operand = self.evaluate(operand)?;
                 apply_unary(*operator, operand, *span)
             }
@@ -423,6 +459,26 @@ impl<'p> Interpreter<'p> {
                 span,
             } => self.evaluate_call(callee, arguments, *span),
         }
+    }
+
+    /// An integer literal becomes a value of the type the checker gave
+    /// it. A literal the checker never saw (a program that skipped it)
+    /// gets the type the checker gives a literal with no context, `i32`.
+    fn evaluate_integer_literal(
+        &self,
+        literal: &Expression,
+        value: i64,
+    ) -> Result<Value, RuntimeError> {
+        let ty = self.types.type_of(literal).unwrap_or(Type::I32);
+        integer_value(i128::from(value), ty).ok_or_else(|| {
+            RuntimeError::new(
+                RuntimeErrorKind::IntegerLiteralOutOfRange {
+                    value,
+                    ty: integer_type_name(ty),
+                },
+                literal.span(),
+            )
+        })
     }
 
     /// A variable evaluates to its current value. Semantic analysis
@@ -489,11 +545,13 @@ impl<'p> Interpreter<'p> {
     }
 }
 
-/// Apply a unary operator: `-` negates an integer, `!` negates a
-/// boolean. Anything else (`-true`, `!1`) is an invalid operation.
+/// Apply a unary operator: `-` negates an integer (checked: negating
+/// the smallest integer overflows), `!` negates a boolean. Anything else
+/// (`-true`, `!1`) is an invalid operation.
 fn apply_unary(operator: UnaryOperator, operand: Value, span: Span) -> Result<Value, RuntimeError> {
     match (operator, operand) {
-        (UnaryOperator::Neg, Value::Integer(n)) => checked(n.checked_neg(), "-", span),
+        (UnaryOperator::Neg, Value::I32(n)) => checked(-i128::from(n), Type::I32, "-", span),
+        (UnaryOperator::Neg, Value::I64(n)) => checked(-i128::from(n), Type::I64, "-", span),
         (UnaryOperator::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
         (operator, operand) => Err(RuntimeError::new(
             RuntimeErrorKind::InvalidUnaryOperation {
@@ -507,17 +565,19 @@ fn apply_unary(operator: UnaryOperator, operand: Value, span: Span) -> Result<Va
 
 /// Apply a binary operator to two already-evaluated operands.
 ///
-/// Without a type checker, the interpreter is the only place that
-/// notices an operator applied to the wrong kinds of value. The rules:
+/// The type checker has made sure the operands fit the operator (see
+/// `types::rules`), so in a checked program only the first three cases
+/// ever happen:
 ///
 /// ```text
-/// integer  + - * /  integer   → integer (checked: overflow is an error)
-/// string   +        string    → string  (concatenation)
-/// integer  < <= > >= integer  → boolean
-/// a        == !=    a         → boolean (both operands the same kind)
+/// i32 (op) i32, i64 (op) i64  → integer arithmetic or comparison
+/// string + string             → string (concatenation)
+/// string/bool == != same      → bool
 /// anything else               → invalid operation
 /// ```
 ///
+/// The last case is the interpreter's own guard against a program that
+/// skipped type checking, which it reports rather than crash on.
 /// `divisor_span` points a division-by-zero error at the divisor itself.
 /// Every other error points at the whole expression.
 fn apply_binary(
@@ -530,47 +590,101 @@ fn apply_binary(
     use BinaryOperator::*;
 
     match (operator, left, right) {
-        (Add, Value::Integer(a), Value::Integer(b)) => checked(a.checked_add(b), "+", span),
+        (_, Value::I32(a), Value::I32(b)) => {
+            integer_binary(operator, a.into(), b.into(), Type::I32, span, divisor_span)
+        }
+        (_, Value::I64(a), Value::I64(b)) => {
+            integer_binary(operator, a.into(), b.into(), Type::I64, span, divisor_span)
+        }
         (Add, Value::String(a), Value::String(b)) => Ok(Value::String(a + &b)),
-        (Sub, Value::Integer(a), Value::Integer(b)) => checked(a.checked_sub(b), "-", span),
-        (Mul, Value::Integer(a), Value::Integer(b)) => checked(a.checked_mul(b), "*", span),
-        (Div, Value::Integer(_), Value::Integer(0)) => Err(RuntimeError::new(
-            RuntimeErrorKind::DivisionByZero,
-            divisor_span,
-        )),
-        // Integer division truncates toward zero: `-7 / 2` is `-3`. The
-        // one overflowing case is the most negative integer divided by -1.
-        (Div, Value::Integer(a), Value::Integer(b)) => checked(a.checked_div(b), "/", span),
-        (Lt, Value::Integer(a), Value::Integer(b)) => Ok(Value::Boolean(a < b)),
-        (Le, Value::Integer(a), Value::Integer(b)) => Ok(Value::Boolean(a <= b)),
-        (Gt, Value::Integer(a), Value::Integer(b)) => Ok(Value::Boolean(a > b)),
-        (Ge, Value::Integer(a), Value::Integer(b)) => Ok(Value::Boolean(a >= b)),
-        // Equality is only defined between values of the same kind:
-        // `1 == true` is an invalid operation, not `false`.
-        (Eq, a, b) if a.kind_name() == b.kind_name() => Ok(Value::Boolean(a == b)),
-        (NotEq, a, b) if a.kind_name() == b.kind_name() => Ok(Value::Boolean(a != b)),
-        (operator, left, right) => Err(RuntimeError::new(
-            RuntimeErrorKind::InvalidBinaryOperation {
-                operator: operator.to_string(),
-                left: left.kind_name(),
-                right: right.kind_name(),
-            },
-            span,
-        )),
+        (Eq, Value::String(a), Value::String(b)) => Ok(Value::Boolean(a == b)),
+        (NotEq, Value::String(a), Value::String(b)) => Ok(Value::Boolean(a != b)),
+        (Eq, Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+        (NotEq, Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a != b)),
+        (operator, left, right) => Err(invalid_binary(operator, &left, &right, span)),
     }
 }
 
-/// Turn the result of a checked integer operation into a value, or into
-/// an overflow error if the true result does not fit in 64 bits. Integer
-/// arithmetic never silently wraps around and never crashes.
-fn checked(result: Option<i64>, operator: &str, span: Span) -> Result<Value, RuntimeError> {
-    match result {
-        Some(n) => Ok(Value::Integer(n)),
-        None => Err(RuntimeError::new(
+/// An integer operation on two operands of the integer type `ty`, given
+/// as exact `i128`s. Arithmetic computes the true result, then checks it
+/// fits in `ty` (see the module docs on integers). An `i128` holds the
+/// true result of any of these operations on two `i64`s.
+fn integer_binary(
+    operator: BinaryOperator,
+    a: i128,
+    b: i128,
+    ty: Type,
+    span: Span,
+    divisor_span: Span,
+) -> Result<Value, RuntimeError> {
+    use BinaryOperator::*;
+
+    let exact = match operator {
+        Add => a + b,
+        Sub => a - b,
+        Mul => a * b,
+        Div if b == 0 => {
+            return Err(RuntimeError::new(
+                RuntimeErrorKind::DivisionByZero,
+                divisor_span,
+            ))
+        }
+        // Integer division truncates toward zero: `-7 / 2` is `-3`.
+        Div => a / b,
+        Lt => return Ok(Value::Boolean(a < b)),
+        Le => return Ok(Value::Boolean(a <= b)),
+        Gt => return Ok(Value::Boolean(a > b)),
+        Ge => return Ok(Value::Boolean(a >= b)),
+        Eq => return Ok(Value::Boolean(a == b)),
+        NotEq => return Ok(Value::Boolean(a != b)),
+    };
+    checked(exact, ty, &operator.to_string(), span)
+}
+
+/// The true result `exact` of an integer operation, as a value of type
+/// `ty`, or an overflow error if it does not fit. Integer arithmetic
+/// never silently wraps around and never crashes.
+fn checked(exact: i128, ty: Type, operator: &str, span: Span) -> Result<Value, RuntimeError> {
+    integer_value(exact, ty).ok_or_else(|| {
+        RuntimeError::new(
             RuntimeErrorKind::IntegerOverflow {
                 operator: operator.to_string(),
+                ty: integer_type_name(ty),
             },
             span,
-        )),
+        )
+    })
+}
+
+/// `value` as a value of the integer type `ty`, if it fits in it.
+fn integer_value(value: i128, ty: Type) -> Option<Value> {
+    match ty {
+        Type::I64 => i64::try_from(value).ok().map(Value::I64),
+        // Every integer that is not an `i64` is an `i32`.
+        _ => i32::try_from(value).ok().map(Value::I32),
     }
+}
+
+/// How runtime errors name the integer type `ty`.
+fn integer_type_name(ty: Type) -> &'static str {
+    match ty {
+        Type::I64 => "i64",
+        _ => "i32",
+    }
+}
+
+fn invalid_binary(
+    operator: BinaryOperator,
+    left: &Value,
+    right: &Value,
+    span: Span,
+) -> RuntimeError {
+    RuntimeError::new(
+        RuntimeErrorKind::InvalidBinaryOperation {
+            operator: operator.to_string(),
+            left: left.kind_name(),
+            right: right.kind_name(),
+        },
+        span,
+    )
 }

@@ -1,8 +1,9 @@
 //! The interpreter: gives a checked program behavior by walking its AST.
 //!
 //! Every stage before this one only *described* the program: the lexer
-//! found its pieces, the parser its structure, and semantic analysis
-//! checked that its names mean something. The interpreter is the first
+//! found its pieces, the parser its structure, semantic analysis checked
+//! that its names mean something, and type checking that its operations
+//! are valid for their values. The interpreter is the first
 //! stage that *does* what the program says.
 //!
 //! It is a **tree-walking** interpreter. It evaluates the AST directly,
@@ -11,7 +12,7 @@
 //! ```text
 //! AST (source)                 Runtime
 //!
-//! Binary(+)                    Integer(30)
+//! Binary(+)                    I32(30)
 //! ├── Integer(10)      ──→
 //! └── Integer(20)
 //! ```
@@ -28,6 +29,7 @@ mod eval;
 pub mod value;
 
 use crate::ast::declaration::Program;
+use crate::types::TypedProgram;
 use error::RuntimeError;
 use value::Value;
 
@@ -49,19 +51,21 @@ const STACK_SIZE: usize = 256 * 1024 * 1024;
 /// Run `program` by calling its `main`, returning the value `main`
 /// returns (`Unit` if it returns none).
 ///
-/// The program must have passed semantic analysis. The interpreter
-/// relies on it: a name it cannot find is reported as a runtime error
-/// rather than crashing, but finding those is semantic analysis's job,
-/// with better diagnostics.
+/// The program must have passed semantic analysis and type checking, and
+/// `types` is what the type checker recorded about it. The interpreter
+/// relies on both stages: a name it cannot find, or an operation on the
+/// wrong kind of value, is reported as a runtime error rather than
+/// crashing, but finding those is the earlier stages' job, with better
+/// diagnostics.
 ///
 /// The interpreter runs on a thread of its own with a [`STACK_SIZE`]
 /// stack; this function waits for it to finish.
-pub fn run(program: &Program) -> Result<Value, RuntimeError> {
+pub fn run(program: &Program, types: &TypedProgram) -> Result<Value, RuntimeError> {
     std::thread::scope(|scope| {
         let interpreter = std::thread::Builder::new()
             .name("dijk-interpreter".to_string())
             .stack_size(STACK_SIZE)
-            .spawn_scoped(scope, || eval::Interpreter::new(program).run_main());
+            .spawn_scoped(scope, || eval::Interpreter::new(program, types).run_main());
 
         match interpreter {
             Ok(thread) => match thread.join() {
@@ -73,7 +77,7 @@ pub fn run(program: &Program) -> Result<Value, RuntimeError> {
             // The operating system refused a stack that large. Run on
             // the current thread instead: programs that recurse only
             // modestly still work.
-            Err(_) => eval::Interpreter::new(program).run_main(),
+            Err(_) => eval::Interpreter::new(program, types).run_main(),
         }
     })
 }

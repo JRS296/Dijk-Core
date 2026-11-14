@@ -21,8 +21,8 @@ mod interpreter {
 use interpreter::environment::Environment;
 use interpreter::value::Value;
 
-fn int(value: i64) -> Value {
-    Value::Integer(value)
+fn int(value: i32) -> Value {
+    Value::I32(value)
 }
 
 // --- definition and lookup ---

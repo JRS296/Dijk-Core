@@ -46,6 +46,8 @@ use error::TypeError;
 use std::collections::HashMap;
 use ty::Type;
 
+pub use check::literal_value;
+
 /// Everything the type checker learned about a program, kept so that
 /// later stages can use it instead of working it out again.
 ///

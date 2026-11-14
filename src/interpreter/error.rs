@@ -1,9 +1,10 @@
 //! Runtime errors: problems that only show up while a program runs.
 //!
-//! Semantic analysis rejects programs that cannot mean anything, before
-//! they run. Some problems, though, depend on the *values* a program
-//! computes, such as a division whose divisor turns out to be zero. No
-//! earlier stage can see those. They are runtime errors, and they are
+//! Semantic analysis rejects programs that cannot mean anything, and type
+//! checking rejects programs whose operations don't fit their types, both
+//! before they run. Some problems, though, depend on the *values* a
+//! program computes, such as a division whose divisor turns out to be
+//! zero, or a sum too large for its type. No earlier stage can see those. They are runtime errors, and they are
 //! reported against the expression that was being evaluated when things
 //! went wrong.
 
@@ -16,23 +17,31 @@ use std::fmt;
 pub enum RuntimeErrorKind {
     /// An integer was divided by zero.
     DivisionByZero,
-    /// The true result of an integer operation does not fit in 64 bits.
-    IntegerOverflow { operator: String },
+    /// The true result of an integer operation does not fit in the type
+    /// of its operands (`ty`, `i32` or `i64`).
+    IntegerOverflow { operator: String, ty: &'static str },
+    /// An integer literal does not fit in the type it was given. The type
+    /// checker rejects such programs before they run; the interpreter
+    /// still reports it rather than crash, should it ever be given an
+    /// unchecked program.
+    IntegerLiteralOutOfRange { value: i64, ty: &'static str },
     /// A binary operator was applied to kinds of value it is not defined
-    /// for, such as `1 + true` or `"a" - "b"`.
+    /// for, such as `1 + true` or `"a" - "b"`. The type checker rejects
+    /// such programs before they run; like the errors below, this is the
+    /// interpreter's own guard against a program that skipped it.
     InvalidBinaryOperation {
         operator: String,
         left: &'static str,
         right: &'static str,
     },
     /// A unary operator was applied to a kind of value it is not defined
-    /// for, such as `-true` or `!1`.
+    /// for, such as `-true` or `!1`. Rejected by the type checker first.
     InvalidUnaryOperation {
         operator: String,
         operand: &'static str,
     },
     /// The condition of an `if` or `while` evaluated to something other
-    /// than a boolean.
+    /// than a boolean. Rejected by the type checker first.
     InvalidCondition { found: &'static str },
     /// A variable that does not exist was read or assigned. Semantic
     /// analysis rejects such programs before they run; the interpreter
@@ -81,8 +90,11 @@ impl RuntimeError {
     fn message(&self) -> String {
         match &self.kind {
             RuntimeErrorKind::DivisionByZero => "division by zero".to_string(),
-            RuntimeErrorKind::IntegerOverflow { operator } => {
-                format!("integer overflow: the result of `{operator}` does not fit in 64 bits")
+            RuntimeErrorKind::IntegerOverflow { operator, ty } => {
+                format!("integer overflow: the result of `{operator}` does not fit in `{ty}`")
+            }
+            RuntimeErrorKind::IntegerLiteralOutOfRange { value, ty } => {
+                format!("integer literal `{value}` does not fit in `{ty}`")
             }
             RuntimeErrorKind::InvalidBinaryOperation {
                 operator,

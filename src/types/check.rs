@@ -731,7 +731,11 @@ fn statement_always_returns(stmt: &Statement) -> bool {
 /// `-2147483648`, the smallest `i32`, could not be written: the parser
 /// reads it as `-` applied to `2147483648`, which on its own is one more
 /// than the largest `i32`.
-fn literal_value(expr: &Expression) -> Option<i64> {
+///
+/// The interpreter uses this same function, so that the two stages agree
+/// on what a literal is: a literal the checker accepted as an `i32` is
+/// also built as one at run time, without first building its digits.
+pub fn literal_value(expr: &Expression) -> Option<i64> {
     match expr {
         Expression::Integer(value, _) => Some(*value),
         Expression::Unary {

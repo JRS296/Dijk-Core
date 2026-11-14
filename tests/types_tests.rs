@@ -283,6 +283,27 @@ fn literals_are_typed_wherever_they_appear() {
     }
 }
 
+#[test]
+fn what_counts_as_an_integer_literal() {
+    // Shared with the interpreter, so that both stages agree.
+    let literal = |source: &str| {
+        let program = parse_syntax(&in_main(&format!("{source};")));
+        let ast::declaration::Declaration::Function(main) = &program.declarations[0];
+        let ast::statement::Statement::Expression { expr, .. } = &main.body[0] else {
+            panic!("expected an expression statement");
+        };
+        types::literal_value(expr)
+    };
+    assert_eq!(literal("42"), Some(42));
+    assert_eq!(literal("-42"), Some(-42));
+    // `(42)` is the same node as `42`: parentheses leave no trace.
+    assert_eq!(literal("-(42)"), Some(-42));
+    // Operations on literals are not literals.
+    assert_eq!(literal("--42"), None);
+    assert_eq!(literal("0 - 42"), None);
+    assert_eq!(literal("-x"), None);
+}
+
 // --- literal ranges ---
 
 fn out_of_range(value: i64, ty: Type) -> TypeErrorKind {

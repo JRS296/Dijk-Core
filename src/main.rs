@@ -13,9 +13,6 @@ mod lexer;
 mod parser;
 mod pretty;
 mod semantic;
-// The expression types the type checker records have no consumer yet:
-// the interpreter does not yet tell `i32` values from `i64` ones.
-#[allow(dead_code)]
 mod types;
 
 use interpreter::value::Value;
@@ -323,14 +320,17 @@ fn run(path: &str) {
 
     // A program with type errors must not run at all: the type checker,
     // not the interpreter, decides whether its operations are valid.
-    if let Err(type_errors) = types::check(&program) {
-        for error in &type_errors {
-            eprint!("{}", error.render(path, &source));
+    let typed = match types::check(&program) {
+        Ok(typed) => typed,
+        Err(type_errors) => {
+            for error in &type_errors {
+                eprint!("{}", error.render(path, &source));
+            }
+            std::process::exit(1);
         }
-        std::process::exit(1);
-    }
+    };
 
-    match interpreter::run(&program) {
+    match interpreter::run(&program, &typed) {
         Ok(Value::Unit) => {}
         Ok(value) => println!("{value}"),
         Err(error) => {
