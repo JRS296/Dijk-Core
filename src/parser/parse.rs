@@ -501,7 +501,11 @@ impl Parser {
             }
             TokenKind::Identifier => {
                 self.advance();
-                Ok(Expression::Identifier(token.lexeme, token.span))
+                if self.check(TokenKind::LeftParen) {
+                    self.parse_call(token.lexeme, token.span)
+                } else {
+                    Ok(Expression::Identifier(token.lexeme, token.span))
+                }
             }
             TokenKind::LeftParen => {
                 self.advance();
@@ -511,5 +515,29 @@ impl Parser {
             }
             _ => Err(self.error_at_current("expression")),
         }
+    }
+
+    /// Parses the `"(" arguments? ")"` following a callee name already
+    /// consumed by the caller.
+    fn parse_call(&mut self, callee: String, callee_span: Span) -> Result<Expression, ParseError> {
+        self.advance(); // '('
+        let mut arguments = Vec::new();
+
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                arguments.push(self.parse_expression()?);
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        let close = self.expect(TokenKind::RightParen, "')'")?;
+        let span = Span::new(callee_span.start, close.span.end);
+        Ok(Expression::Call {
+            callee,
+            arguments,
+            span,
+        })
     }
 }

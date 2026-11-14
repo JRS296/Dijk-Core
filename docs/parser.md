@@ -101,9 +101,23 @@ primary     ::= INTEGER
               | STRING
               | "true"
               | "false"
+              | call
               | identifier
               | "(" expression ")"
+
+call        ::= identifier "(" arguments? ")"
+
+arguments   ::= expression ("," expression)*
 ```
+
+A call's callee is currently always a plain identifier naming a function —
+not a general expression. Dijk has no first-class functions (no way to
+produce a callable value other than by naming a declared function
+directly), so there is nothing else a callee could be yet. This is why
+`call` is folded into `primary` rather than given its own precedence
+level: with no other postfix operations (no indexing, no field access),
+"an identifier, optionally followed by a call" is simplest to parse as
+one case in `parse_primary`, not as a separate grammar tier.
 
 Everything not in this grammar (structs, enums, arrays, references, `for`,
 modules, ...) is out of scope for this milestone; see `docs/language.md`

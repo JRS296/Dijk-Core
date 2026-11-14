@@ -471,6 +471,90 @@ fn nested_binary_expression_spans_grow_outward() {
     }
 }
 
+// --- calls ---
+
+#[test]
+fn call_with_no_arguments() {
+    match single_expr_statement("foo()") {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            assert_eq!(callee, "foo");
+            assert!(arguments.is_empty());
+        }
+        other => panic!("expected Call, got {other:?}"),
+    }
+}
+
+#[test]
+fn call_with_arguments() {
+    match single_expr_statement("add(1, 2 + 3)") {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            assert_eq!(callee, "add");
+            assert_eq!(arguments.len(), 2);
+            assert!(matches!(arguments[0], Expression::Integer(1, _)));
+            assert!(matches!(
+                arguments[1],
+                Expression::Binary {
+                    operator: BinaryOperator::Add,
+                    ..
+                }
+            ));
+        }
+        other => panic!("expected Call, got {other:?}"),
+    }
+}
+
+#[test]
+fn call_binds_tighter_than_unary_minus() {
+    // -foo() must mean -(foo()), not (-foo)() — the latter isn't even
+    // expressible, since a callee must be a plain identifier.
+    match single_expr_statement("-foo()") {
+        Expression::Unary {
+            operator: UnaryOperator::Neg,
+            operand,
+            ..
+        } => {
+            assert!(matches!(*operand, Expression::Call { .. }));
+        }
+        other => panic!("expected Unary(Neg) wrapping a Call, got {other:?}"),
+    }
+}
+
+#[test]
+fn nested_calls_as_arguments() {
+    match single_expr_statement("outer(inner())") {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            assert_eq!(callee, "outer");
+            assert_eq!(arguments.len(), 1);
+            assert!(matches!(&arguments[0], Expression::Call { callee, .. } if callee == "inner"));
+        }
+        other => panic!("expected Call, got {other:?}"),
+    }
+}
+
+#[test]
+fn identifier_not_followed_by_parens_is_not_a_call() {
+    assert!(matches!(single_expr_statement("foo"), Expression::Identifier(ref n, _) if n == "foo"));
+}
+
+#[test]
+fn call_missing_close_paren_is_an_error() {
+    let errors = parse_errors("fn main() {\n    foo(1, 2;\n}\n");
+    assert_eq!(errors.len(), 1);
+    assert!(matches!(
+        &errors[0].kind,
+        ParseErrorKind::UnexpectedToken {
+            found: lexer::token::TokenKind::Semicolon,
+            ..
+        }
+    ));
+}
+
 // --- errors ---
 
 fn parse_errors(source: &str) -> Vec<ParseError> {
