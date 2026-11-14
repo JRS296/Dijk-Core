@@ -5,13 +5,35 @@ use crate::lexer::token::Span;
 use std::fmt;
 
 /// One variant per rule semantic analysis enforces.
-///
-/// There are none yet. The analyzer can walk a program (see
-/// `resolve.rs`), but it enforces no rules, so no semantic error can be
-/// constructed. The type says exactly that: an enum with no variants has
-/// no values. Each rule, once implemented, adds its own variant here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SemanticErrorKind {}
+pub enum SemanticErrorKind {
+    /// A name is used as a variable, but no variable of that name is
+    /// visible here.
+    UnknownIdentifier { name: String },
+    /// An assignment targets a variable that was never declared with
+    /// `let` (or as a parameter). Assignment changes an existing
+    /// variable; it never creates one.
+    AssignToUndeclared { name: String },
+    /// A call names a function that the program does not define.
+    UnknownFunction { name: String },
+    /// A call passes a different number of arguments than the function
+    /// declares parameters.
+    ArityMismatch {
+        name: String,
+        expected: usize,
+        found: usize,
+    },
+    /// Two functions share a name, so a call to it would be ambiguous.
+    DuplicateFunction { name: String },
+    /// Two parameters of one function share a name.
+    DuplicateParameter { name: String },
+    /// The program defines no `main`, so there is nowhere to start
+    /// running it.
+    MissingMain,
+    /// `main` declares parameters, but nothing could ever pass it
+    /// arguments: it is called by `dijk run`, not by Dijk code.
+    MainHasParameters,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticError {
@@ -25,7 +47,32 @@ impl SemanticError {
     }
 
     fn message(&self) -> String {
-        match self.kind {}
+        match &self.kind {
+            SemanticErrorKind::UnknownIdentifier { name } => {
+                format!("unknown identifier `{name}`")
+            }
+            SemanticErrorKind::AssignToUndeclared { name } => {
+                format!("cannot assign to undeclared variable `{name}`")
+            }
+            SemanticErrorKind::UnknownFunction { name } => format!("unknown function `{name}`"),
+            SemanticErrorKind::ArityMismatch {
+                name,
+                expected,
+                found,
+            } => {
+                format!("wrong number of arguments to `{name}`: expected {expected}, found {found}")
+            }
+            SemanticErrorKind::DuplicateFunction { name } => {
+                format!("function `{name}` is defined more than once")
+            }
+            SemanticErrorKind::DuplicateParameter { name } => {
+                format!("parameter `{name}` is declared more than once")
+            }
+            SemanticErrorKind::MissingMain => {
+                "no `main` function: a Dijk program starts running at `fn main()`".to_string()
+            }
+            SemanticErrorKind::MainHasParameters => "`main` must not take parameters".to_string(),
+        }
     }
 
     /// Render this error as a source-anchored diagnostic labelled
