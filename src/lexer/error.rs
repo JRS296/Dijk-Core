@@ -29,7 +29,7 @@ impl LexError {
     /// Render this error as a source-anchored diagnostic. See
     /// `crate::diagnostics::render`.
     pub fn render(&self, file: &str, source: &str) -> String {
-        diagnostics::render(file, source, self.span, &self.message())
+        diagnostics::render(file, source, self.span, "error", &self.message())
     }
 }
 

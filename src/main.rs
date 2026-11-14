@@ -9,6 +9,11 @@ mod diagnostics;
 mod lexer;
 mod parser;
 mod pretty;
+// No command runs semantic analysis yet, so nothing in the binary reaches
+// this module and the compiler would (rightly) report all of it as
+// unused. The allow lasts only until a command calls it.
+#[allow(dead_code)]
+mod semantic;
 
 const VERSION: &str = "0.0.3";
 

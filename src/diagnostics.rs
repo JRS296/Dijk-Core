@@ -1,10 +1,17 @@
-//! Source-anchored diagnostic rendering, shared by the lexer and parser so
-//! every compiler stage reports errors in the same shape.
+//! Source-anchored diagnostic rendering, shared by every compiler stage so
+//! each one reports errors in the same shape.
+//!
+//! The shape is fixed; only the leading label changes. The label names
+//! the class of problem, which is also the stage that detected it:
+//! lexical and parse errors are plain `error:`, while semantic analysis
+//! and the interpreter say `semantic error:` and `runtime error:`. The
+//! label tells a reader *which* stage rejected the program.
 
 use crate::lexer::token::Span;
 
 /// Render `message` as a diagnostic anchored to `span` within `source`,
-/// attributed to `file`, e.g.:
+/// attributed to `file` and introduced by `label`. With the label
+/// `"error"`:
 ///
 /// ```text
 /// error: unexpected character '@'
@@ -13,13 +20,13 @@ use crate::lexer::token::Span;
 /// 1 | let x = 42 @ 10;
 ///   |            ^
 /// ```
-pub fn render(file: &str, source: &str, span: Span, message: &str) -> String {
+pub fn render(file: &str, source: &str, span: Span, label: &str, message: &str) -> String {
     let (line, col, line_text) = locate(source, span.start);
     let gutter = line.to_string().len();
     let pointer = " ".repeat(col.saturating_sub(1));
 
     format!(
-        "error: {message}\n{pad}--> {file}:{line}:{col}\n{pad} |\n{line} | {line_text}\n{pad} | {pointer}^\n",
+        "{label}: {message}\n{pad}--> {file}:{line}:{col}\n{pad} |\n{line} | {line_text}\n{pad} | {pointer}^\n",
         pad = " ".repeat(gutter),
     )
 }
