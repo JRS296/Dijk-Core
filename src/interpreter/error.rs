@@ -31,6 +31,9 @@ pub enum RuntimeErrorKind {
         operator: String,
         operand: &'static str,
     },
+    /// The condition of an `if` or `while` evaluated to something other
+    /// than a boolean.
+    InvalidCondition { found: &'static str },
     /// A variable that does not exist was read or assigned. Semantic
     /// analysis rejects such programs before they run; the interpreter
     /// still reports it rather than crash, should it ever be given an
@@ -65,6 +68,9 @@ impl RuntimeError {
             } => format!("invalid operation: cannot apply `{operator}` to {left} and {right}"),
             RuntimeErrorKind::InvalidUnaryOperation { operator, operand } => {
                 format!("invalid operation: cannot apply `{operator}` to {operand}")
+            }
+            RuntimeErrorKind::InvalidCondition { found } => {
+                format!("invalid operation: a condition must be a boolean, found {found}")
             }
             RuntimeErrorKind::UndefinedVariable { name } => format!("undefined variable `{name}`"),
             RuntimeErrorKind::UndefinedFunction { name } => format!("undefined function `{name}`"),

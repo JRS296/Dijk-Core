@@ -23,15 +23,36 @@
 //! node must produce a value and must be able to fail. So each kind of
 //! node is handled by an explicit `match` that returns
 //! `Result<Value, RuntimeError>`.
+//!
+//! Statements are *executed* rather than evaluated. They are run for
+//! their effect on the environment, not for a value. Control flow
+//! statements decide which statements run, and how many times:
+//!
+//! ```text
+//! if condition { then } else { otherwise }
+//!     evaluate condition → true  → execute then
+//!                        → false → execute otherwise (if present)
+//!
+//! while condition { body }
+//!     evaluate condition → true  → execute body, then evaluate again
+//!                        → false → done
+//! ```
+//!
+//! Each branch and loop body runs in a block scope of its own, pushed on
+//! entry and popped on exit, matching the scopes semantic analysis
+//! checked the program against. A `while` body gets a fresh scope on
+//! every iteration, so a `let` inside the loop declares a new variable
+//! each time around.
 
 use super::environment::Environment;
 use super::error::{RuntimeError, RuntimeErrorKind};
 use super::value::Value;
 use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
+use crate::ast::statement::Statement;
 use crate::lexer::token::Span;
 
 /// The state of a running program: for now, one environment of
-/// variables that every expression is evaluated against.
+/// variables that every statement and expression runs against.
 pub struct Interpreter {
     environment: Environment,
 }
@@ -40,6 +61,89 @@ impl Interpreter {
     pub fn new() -> Self {
         Self {
             environment: Environment::new(),
+        }
+    }
+
+    /// Execute `statements` in a new block scope. The scope is popped
+    /// whether the statements finish normally or fail.
+    pub fn execute_block(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+        self.environment.push_scope();
+        let result = self.execute_statements(statements);
+        self.environment.pop_scope();
+        result
+    }
+
+    /// Execute `statements` in order, in the current scope, stopping at
+    /// the first error.
+    fn execute_statements(&mut self, statements: &[Statement]) -> Result<(), RuntimeError> {
+        for stmt in statements {
+            self.execute_statement(stmt)?;
+        }
+        Ok(())
+    }
+
+    pub fn execute_statement(&mut self, stmt: &Statement) -> Result<(), RuntimeError> {
+        match stmt {
+            Statement::Let { name, value, .. } => {
+                let value = self.evaluate(value)?;
+                self.environment.define(name, value);
+                Ok(())
+            }
+            // An expression statement is evaluated for its effect (an
+            // assignment, say); its value is discarded.
+            Statement::Expression { expr, .. } => {
+                self.evaluate(expr)?;
+                Ok(())
+            }
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if self.evaluate_condition(condition)? {
+                    self.execute_block(then_branch)
+                } else if let Some(else_branch) = else_branch {
+                    // An `else if` is an else branch holding one `If`, so
+                    // chains need no special handling here.
+                    self.execute_block(else_branch)
+                } else {
+                    Ok(())
+                }
+            }
+            Statement::While {
+                condition, body, ..
+            } => {
+                while self.evaluate_condition(condition)? {
+                    self.execute_block(body)?;
+                }
+                Ok(())
+            }
+            // `return` hands a value back to whoever called the current
+            // function. Nothing calls functions yet, so there is no one
+            // to hand it to: the value is evaluated (which may fail), and
+            // execution carries on with the next statement.
+            Statement::Return { value, .. } => {
+                if let Some(value) = value {
+                    self.evaluate(value)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Evaluate the condition of an `if` or `while`. Only a boolean can
+    /// decide which way to go: there is no "truthiness", so `if 5` is an
+    /// invalid operation, not "true because it's non-zero".
+    fn evaluate_condition(&mut self, condition: &Expression) -> Result<bool, RuntimeError> {
+        match self.evaluate(condition)? {
+            Value::Boolean(value) => Ok(value),
+            other => Err(RuntimeError::new(
+                RuntimeErrorKind::InvalidCondition {
+                    found: other.kind_name(),
+                },
+                condition.span(),
+            )),
         }
     }
 
