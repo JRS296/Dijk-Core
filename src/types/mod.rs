@@ -75,10 +75,30 @@ pub struct TypedProgram {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedFunction {
     pub name: String,
-    /// Every variable the function declares, in the order the checker
-    /// met them (source order). Each one is listed separately, so a
-    /// variable that shadows another appears as a binding of its own.
+    pub signature: FunctionSignature,
+    /// Every variable the function declares, parameters first, then each
+    /// `let` in the order the checker met them (source order). Each one
+    /// is listed separately, so a variable that shadows another appears
+    /// as a binding of its own.
     pub bindings: Vec<Binding>,
+}
+
+/// A function's type: what it takes and what it gives back.
+///
+/// A signature is a contract between a function and everyone who calls
+/// it. A caller promises to pass arguments of the parameter types; the
+/// function promises to return a value of the return type. Each side can
+/// then be checked on its own: a call against the signature, without
+/// looking at the body, and the body against the signature, without
+/// looking at any caller.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionSignature {
+    /// Each parameter's name and type, in order. The names are not part
+    /// of the contract (a caller passes arguments by position), but they
+    /// make a signature readable.
+    pub params: Vec<(String, Type)>,
+    /// `unit` for a function declared without `-> T`.
+    pub return_type: Type,
 }
 
 /// A variable and the type it was given: one entry of the typing

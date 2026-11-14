@@ -91,6 +91,15 @@
 //! resolve names again: semantic analysis already has, so a name is
 //! simply looked up in Γ.
 //!
+//! # Functions
+//!
+//! Before any body is checked, the checker collects every function's
+//! *signature*: its parameter types, and its return type (`unit` if the
+//! function has no `-> T`). Like semantic analysis's first pass, this is
+//! what lets a body use a function declared later in the file, or
+//! itself. Each body is then checked with its parameters already in the
+//! function scope of Γ, with the types their annotations name.
+//!
 //! # Assignments
 //!
 //! `x = value` stores a new value in an existing variable, so the value
@@ -105,7 +114,7 @@ use super::env::TypeEnvironment;
 use super::error::{TypeError, TypeErrorKind};
 use super::rules;
 use super::ty::{self, Type};
-use super::{Binding, TypedFunction, TypedProgram};
+use super::{Binding, FunctionSignature, TypedFunction, TypedProgram};
 use crate::ast::declaration::{Declaration, Function, Program};
 use crate::ast::expression::{BinaryOperator, Expression, UnaryOperator};
 use crate::ast::statement::Statement;
@@ -122,9 +131,20 @@ pub fn check_program(program: &Program) -> Result<TypedProgram, Vec<TypeError>> 
         errors: Vec::new(),
     };
 
-    for declaration in &program.declarations {
+    // Pass 1: every signature, before any body.
+    let signatures: Vec<FunctionSignature> = program
+        .declarations
+        .iter()
+        .map(|declaration| {
+            let Declaration::Function(function) = declaration;
+            checker.collect_signature(function)
+        })
+        .collect();
+
+    // Pass 2: every body, against its own signature.
+    for (declaration, signature) in program.declarations.iter().zip(signatures) {
         let Declaration::Function(function) = declaration;
-        checker.check_function(function);
+        checker.check_function(function, signature);
     }
 
     if checker.errors.is_empty() {
@@ -154,17 +174,59 @@ impl Checker {
 
     // --- functions and statements ---
 
-    /// Each function is checked in a fresh environment: a body cannot see
-    /// the variables of any other function.
-    fn check_function(&mut self, function: &Function) {
+    /// Work out `function`'s signature from its annotations. An unknown
+    /// type name is reported here, once, and stands for `Type::Error`
+    /// from then on.
+    fn collect_signature(&mut self, function: &Function) -> FunctionSignature {
+        let params = function
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), self.resolve(&param.ty)))
+            .collect();
+
+        // No `-> T` means the function returns no value: `unit`.
+        let return_type = match &function.return_type {
+            Some(annotation) => self.resolve(annotation),
+            None => Type::Unit,
+        };
+
+        FunctionSignature {
+            params,
+            return_type,
+        }
+    }
+
+    /// The type an annotation names, reporting an unknown name.
+    fn resolve(&mut self, annotation: &TypeAnnotation) -> Type {
+        match ty::resolve(annotation) {
+            Ok(ty) => ty,
+            Err(error) => {
+                self.errors.push(error);
+                Type::Error
+            }
+        }
+    }
+
+    /// Check `function`'s body against its `signature`. Each function is
+    /// checked in a fresh environment holding only its parameters: a body
+    /// cannot see the variables of any other function.
+    fn check_function(&mut self, function: &Function, signature: FunctionSignature) {
         self.env = TypeEnvironment::new();
         self.bindings = Vec::new();
 
-        // The body's top-level statements live in the function scope.
+        for (param, (_, ty)) in function.params.iter().zip(&signature.params) {
+            // A parameter's span starts at its name (`a: i32`).
+            let name_span = Span::new(param.span.start, param.span.start + param.name.len());
+            self.declare(&param.name, name_span, *ty, false);
+        }
+
+        // The body's top-level statements live in the function scope,
+        // alongside the parameters.
         self.check_statements(&function.body);
 
         self.typed.functions.push(TypedFunction {
             name: function.name.clone(),
+            signature,
             bindings: std::mem::take(&mut self.bindings),
         });
     }
@@ -252,8 +314,15 @@ impl Checker {
     ) {
         let ty = match annotation {
             None => self.check_expression(value, None),
-            Some(annotation) => match ty::resolve(annotation) {
-                Ok(declared) => {
+            Some(annotation) => match self.resolve(annotation) {
+                // An unknown type name (already reported): still check the
+                // initializer on its own, and leave the variable untyped
+                // so that its uses are not reported as well.
+                Type::Error => {
+                    self.check_expression(value, None);
+                    Type::Error
+                }
+                declared => {
                     let found = self.check_expression(value, Some(declared));
                     if !Type::compatible(declared, found) {
                         self.error(
@@ -265,14 +334,6 @@ impl Checker {
                         );
                     }
                     declared
-                }
-                // An unknown type name: report it, still check the
-                // initializer on its own, and leave the variable untyped
-                // so that its uses are not reported as well.
-                Err(error) => {
-                    self.errors.push(error);
-                    self.check_expression(value, None);
-                    Type::Error
                 }
             },
         };

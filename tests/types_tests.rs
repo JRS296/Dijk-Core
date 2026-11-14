@@ -37,7 +37,7 @@ use types::env::TypeEnvironment;
 use types::error::{TypeError, TypeErrorKind};
 use types::rules;
 use types::ty::{self, Type};
-use types::TypedProgram;
+use types::{FunctionSignature, TypedProgram};
 
 /// Lex and parse `source`, asserting both stages accept it.
 fn parse_syntax(source: &str) -> Program {
@@ -954,4 +954,171 @@ fn the_type_checker_does_not_enforce_mutability() {
     // asks whether the value's type fits.
     let program = parse_syntax(&in_main("let x = 1;\nx = 2;"));
     assert!(types::check(&program).is_ok());
+}
+
+// --- function signatures ---
+
+/// The signature the checker recorded for the function `name`.
+fn signature_of(typed: &TypedProgram, name: &str) -> FunctionSignature {
+    typed
+        .functions
+        .iter()
+        .find(|function| function.name == name)
+        .unwrap_or_else(|| panic!("no function `{name}`"))
+        .signature
+        .clone()
+}
+
+fn params(list: &[(&str, Type)]) -> Vec<(String, Type)> {
+    list.iter()
+        .map(|(name, ty)| (name.to_string(), *ty))
+        .collect()
+}
+
+const ADD: &str =
+    "fn add(a: i32, b: i32) -> i32 {\n    let result = a + b;\n    return result;\n}\n";
+
+#[test]
+fn a_signature_records_parameter_and_return_types() {
+    let typed = typed(&format!("{ADD}\nfn main() {{}}\n"));
+    assert_eq!(
+        signature_of(&typed, "add"),
+        FunctionSignature {
+            params: params(&[("a", Type::I32), ("b", Type::I32)]),
+            return_type: Type::I32,
+        }
+    );
+}
+
+#[test]
+fn a_function_without_a_return_type_returns_unit() {
+    let typed = typed("fn main() {\n    let x = 1;\n}\n");
+    assert_eq!(signature_of(&typed, "main").return_type, Type::Unit);
+    assert!(signature_of(&typed, "main").params.is_empty());
+}
+
+#[test]
+fn every_function_gets_a_signature_in_declaration_order() {
+    let typed = typed("fn main() -> bool {\n    return true;\n}\n\nfn later(flag: bool, text: string, big: i64) -> string {\n    return text;\n}\n");
+    let names: Vec<_> = typed.functions.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, vec!["main", "later"]);
+    assert_eq!(
+        signature_of(&typed, "later"),
+        FunctionSignature {
+            params: params(&[
+                ("flag", Type::Bool),
+                ("text", Type::String),
+                ("big", Type::I64)
+            ]),
+            return_type: Type::String,
+        }
+    );
+    assert_eq!(signature_of(&typed, "main").return_type, Type::Bool);
+}
+
+#[test]
+fn parameters_have_their_annotated_types_in_the_body() {
+    let source = "fn grow(n: i64) {\n    let next = n + 1;\n}\n\nfn main() {}\n";
+    assert_eq!(type_at(source, "n + 1"), Some(Type::I64));
+    // The literal took its type from the parameter.
+    assert_eq!(type_at(source, "1"), Some(Type::I64));
+}
+
+#[test]
+fn parameters_are_recorded_as_the_first_bindings() {
+    let source = format!("{ADD}\nfn main() {{}}\n");
+    let typed = typed(&source);
+    let add = &typed.functions[0];
+    let listed: Vec<_> = add
+        .bindings
+        .iter()
+        .map(|b| (b.name.as_str(), b.ty, b.depth, b.mutable))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("a", Type::I32, 0, false),
+            ("b", Type::I32, 0, false),
+            ("result", Type::I32, 0, false),
+        ]
+    );
+    // A parameter's binding points at its name.
+    assert_eq!(add.bindings[1].span, span_of(&source, "b"));
+}
+
+#[test]
+fn a_parameter_can_be_shadowed_in_a_block() {
+    let typed = typed(
+        "fn f(n: i32) {\n    if true {\n        let n = \"text\";\n    }\n}\n\nfn main() {}\n",
+    );
+    let listed: Vec<_> = typed.functions[0]
+        .bindings
+        .iter()
+        .map(|b| (b.name.as_str(), b.ty, b.depth))
+        .collect();
+    assert_eq!(listed, vec![("n", Type::I32, 0), ("n", Type::String, 1)]);
+}
+
+#[test]
+fn an_unknown_parameter_type_is_reported_once() {
+    let source = "fn f(x: banana) {\n    let y = x;\n}\n\nfn main() {}\n";
+    let errors = type_errors(source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].kind,
+        TypeErrorKind::UnknownType {
+            name: "banana".to_string()
+        }
+    );
+    assert_eq!(errors[0].span, span_of(source, "banana"));
+}
+
+#[test]
+fn an_unknown_return_type_is_reported() {
+    assert_eq!(
+        error_kinds("fn f() -> number {}\n\nfn main() {}\n"),
+        vec![TypeErrorKind::UnknownType {
+            name: "number".to_string()
+        }]
+    );
+}
+
+#[test]
+fn unit_cannot_be_written_as_a_return_type() {
+    // Leave out `-> T` instead.
+    assert_eq!(
+        error_kinds("fn f() -> unit {}\n\nfn main() {}\n"),
+        vec![TypeErrorKind::UnknownType {
+            name: "unit".to_string()
+        }]
+    );
+}
+
+#[test]
+fn signatures_are_collected_before_any_body_is_checked() {
+    // Every function has its signature, whatever order they appear in,
+    // so a body can rely on functions declared after it.
+    let typed = typed("fn main() {}\n\nfn late(x: i64) -> bool {\n    return x > 0;\n}\n");
+    assert_eq!(
+        signature_of(&typed, "late").params,
+        params(&[("x", Type::I64)])
+    );
+}
+
+#[test]
+fn duplicate_functions_are_a_semantic_error_not_a_type_error() {
+    // The checker runs only after semantic analysis has accepted the
+    // program, and semantic analysis already rejects two functions with
+    // one name.
+    let program =
+        parse_syntax("fn twice() {}\nfn twice() -> i32 {\n    return 1;\n}\nfn main() {}\n");
+    assert_eq!(
+        semantic::analyze(&program)
+            .into_iter()
+            .map(|e| e.kind)
+            .collect::<Vec<_>>(),
+        vec![semantic::error::SemanticErrorKind::DuplicateFunction {
+            name: "twice".to_string()
+        }]
+    );
 }
