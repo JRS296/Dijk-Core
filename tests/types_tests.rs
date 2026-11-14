@@ -1258,3 +1258,266 @@ fn unknown_functions_and_wrong_argument_counts_are_still_semantic_errors() {
     );
     assert!(types::check(&program).is_ok());
 }
+
+// --- return statements ---
+
+fn invalid_return(function: &str, expected: Type, found: Type) -> TypeErrorKind {
+    TypeErrorKind::InvalidReturn {
+        function: function.to_string(),
+        expected,
+        found,
+    }
+}
+
+fn missing_return(function: &str, expected: Type) -> TypeErrorKind {
+    TypeErrorKind::MissingReturn {
+        function: function.to_string(),
+        expected,
+    }
+}
+
+/// `body` as the body of `fn f() -> {return_type}`, next to an empty
+/// `main`.
+fn in_function(return_type: &str, body: &str) -> String {
+    format!("fn f() -> {return_type} {{\n{body}\n}}\n\nfn main() {{}}\n")
+}
+
+#[test]
+fn returning_a_value_of_the_return_type_is_valid() {
+    assert!(types::check(&parse(&in_function("i32", "return 42;"))).is_ok());
+}
+
+#[test]
+fn a_returned_literal_takes_the_return_type() {
+    let source = in_function("i64", "return 3000000000;");
+    assert_eq!(type_at(&source, "3000000000"), Some(Type::I64));
+}
+
+#[test]
+fn returning_a_value_of_another_type_is_rejected() {
+    let source = in_function("i32", "return \"hello\";");
+    let errors = type_errors(&source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, invalid_return("f", Type::I32, Type::String));
+    assert_eq!(errors[0].span, span_of(&source, "\"hello\""));
+}
+
+#[test]
+fn a_bare_return_in_a_function_that_returns_a_value_is_rejected() {
+    let source = in_function("i32", "return;");
+    let errors = type_errors(&source);
+    assert_eq!(errors[0].kind, invalid_return("f", Type::I32, Type::Unit));
+    // Reported at the `return;` itself: there is no value to point at.
+    assert_eq!(errors[0].span, span_of(&source, "return;"));
+}
+
+#[test]
+fn a_function_without_a_return_type_cannot_return_a_value() {
+    assert_eq!(
+        error_kinds("fn log() {\n    return 1;\n}\n\nfn main() {}\n"),
+        vec![invalid_return("log", Type::Unit, Type::I32)]
+    );
+    // Returning a huge literal is the same one mistake, not also a range
+    // error: no integer is wanted there at all.
+    assert_eq!(
+        error_kinds("fn log() {\n    return 3000000000;\n}\n\nfn main() {}\n"),
+        vec![invalid_return("log", Type::Unit, Type::I32)]
+    );
+}
+
+#[test]
+fn the_0_0_4_milestone_program_now_needs_a_return_type() {
+    // `fn main()` without `-> T` returns unit, so `return y;` is an error.
+    assert_eq!(
+        error_kinds("fn main() {\n    let x = 10;\n    let y = x + 20;\n    return y;\n}\n"),
+        vec![invalid_return("main", Type::Unit, Type::I32)]
+    );
+    assert!(types::check(&parse(
+        "fn main() -> i32 {\n    let x = 10;\n    let y = x + 20;\n    return y;\n}\n"
+    ))
+    .is_ok());
+}
+
+#[test]
+fn the_return_rule_is_stated_on_types() {
+    // A returned expression must have the return type, and a bare
+    // `return;` counts as `unit`. So returning the result of a `unit` call
+    // is fine in a function that returns `unit`, and an error anywhere else.
+    let helpers = "fn nothing() {}\n\nfn pass_on() {\n    return nothing();\n}\n\n";
+    assert!(types::check(&parse(&format!("{helpers}fn main() {{}}\n"))).is_ok());
+    assert_eq!(
+        error_kinds(&format!(
+            "{helpers}fn number() -> i32 {{\n    return nothing();\n}}\n\nfn main() {{}}\n"
+        )),
+        vec![invalid_return("number", Type::I32, Type::Unit)]
+    );
+}
+
+#[test]
+fn a_function_without_a_return_type_may_use_a_bare_return_or_none() {
+    assert!(types::check(&parse(
+        "fn early(flag: bool) {\n    if flag {\n        return;\n    }\n}\n\nfn main() {}\n"
+    ))
+    .is_ok());
+}
+
+// --- conditions ---
+
+fn invalid_condition(statement: &'static str, found: Type) -> TypeErrorKind {
+    TypeErrorKind::InvalidCondition { statement, found }
+}
+
+#[test]
+fn a_boolean_condition_is_valid() {
+    assert!(types::check(&parse(&in_main(
+        "let ready = true;\nif ready {\n}\nwhile 1 > 2 {\n}"
+    )))
+    .is_ok());
+}
+
+#[test]
+fn an_integer_if_condition_is_rejected() {
+    let source = in_function("i32", "if 10 {\n    return 10;\n}\nreturn 0;");
+    let errors = type_errors(&source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, invalid_condition("if", Type::I32));
+    assert_eq!(errors[0].span, span_of(&source, "10"));
+}
+
+#[test]
+fn a_non_boolean_while_condition_is_rejected() {
+    assert_eq!(
+        error_kinds(&in_main("while \"yes\" {\n}")),
+        vec![invalid_condition("while", Type::String)]
+    );
+}
+
+#[test]
+fn else_if_conditions_are_checked_too() {
+    assert_eq!(
+        error_kinds(&in_main("if false {\n} else if 0 {\n}")),
+        vec![invalid_condition("if", Type::I32)]
+    );
+}
+
+#[test]
+fn a_unit_condition_is_rejected() {
+    assert_eq!(
+        error_kinds("fn nothing() {}\n\nfn main() {\n    if nothing() {\n    }\n}\n"),
+        vec![invalid_condition("if", Type::Unit)]
+    );
+}
+
+// --- return paths ---
+
+#[test]
+fn an_if_without_else_may_not_return() {
+    // Step 5's own example: `true` is never evaluated, so the `if` might
+    // be skipped.
+    let source = in_function("i32", "if true {\n    return 10;\n}");
+    let errors = type_errors(&source);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, missing_return("f", Type::I32));
+    // Reported at the function's closing brace.
+    let end = source.find("}\n\nfn main").unwrap();
+    assert_eq!(errors[0].span, Span::new(end, end + 1));
+}
+
+#[test]
+fn a_body_with_no_return_at_all_is_rejected() {
+    assert_eq!(
+        error_kinds(&in_function("bool", "let x = 1;")),
+        vec![missing_return("f", Type::Bool)]
+    );
+}
+
+#[test]
+fn an_if_else_where_both_branches_return_returns() {
+    assert!(types::check(&parse(&in_function(
+        "i32",
+        "if true {\n    return 1;\n} else {\n    return 2;\n}"
+    )))
+    .is_ok());
+}
+
+#[test]
+fn an_else_if_chain_returns_only_with_a_final_else() {
+    let chain = "if false {\n    return 1;\n} else if true {\n    return 2;\n}";
+    assert_eq!(
+        error_kinds(&in_function("i32", chain)),
+        vec![missing_return("f", Type::I32)]
+    );
+    let complete = format!("{chain} else {{\n    return 3;\n}}");
+    assert!(types::check(&parse(&in_function("i32", &complete))).is_ok());
+}
+
+#[test]
+fn one_branch_that_does_not_return_is_enough_to_be_rejected() {
+    assert_eq!(
+        error_kinds(&in_function(
+            "i32",
+            "if true {\n    return 1;\n} else {\n    let x = 2;\n}"
+        )),
+        vec![missing_return("f", Type::I32)]
+    );
+}
+
+#[test]
+fn a_while_loop_never_counts_as_returning() {
+    // Even `while true`: the checker never evaluates the condition.
+    assert_eq!(
+        error_kinds(&in_function("i32", "while true {\n    return 1;\n}")),
+        vec![missing_return("f", Type::I32)]
+    );
+    assert!(types::check(&parse(&in_function(
+        "i32",
+        "while true {\n    return 1;\n}\nreturn 0;"
+    )))
+    .is_ok());
+}
+
+#[test]
+fn a_return_anywhere_in_the_top_level_block_counts() {
+    // Statements after a `return` can never run; they are allowed.
+    assert!(types::check(&parse(&in_function("i32", "return 1;\nlet after = 2;"))).is_ok());
+    assert!(types::check(&parse(&in_function(
+        "i32",
+        "if true {\n    return 1;\n}\nreturn 2;"
+    )))
+    .is_ok());
+}
+
+#[test]
+fn nested_ifs_return_when_every_path_does() {
+    assert!(types::check(&parse(&in_function(
+        "i32",
+        "if true {\n    if false {\n        return 1;\n    } else {\n        return 2;\n    }\n} else {\n    return 3;\n}"
+    )))
+    .is_ok());
+}
+
+#[test]
+fn unit_functions_need_no_return() {
+    assert!(types::check(&parse(&in_main("let x = 1;"))).is_ok());
+}
+
+#[test]
+fn a_wrong_return_and_a_missing_return_are_both_reported() {
+    assert_eq!(
+        error_kinds(&in_function("i32", "if true {\n    return \"s\";\n}")),
+        vec![
+            invalid_return("f", Type::I32, Type::String),
+            missing_return("f", Type::I32),
+        ]
+    );
+}
+
+#[test]
+fn an_unknown_return_type_is_not_also_a_missing_return() {
+    assert_eq!(
+        error_kinds(&in_function("number", "let x = 1;")),
+        vec![TypeErrorKind::UnknownType {
+            name: "number".to_string()
+        }]
+    );
+}

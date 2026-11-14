@@ -37,6 +37,24 @@ pub enum TypeErrorKind {
         expected: Type,
         found: Type,
     },
+    /// A `return` whose value does not match the function's return type.
+    /// A bare `return;` is found to be `unit`, so it is this error in a
+    /// function with `-> T`, and so is `return value;` in a function
+    /// without one (which is expected to return `unit`).
+    InvalidReturn {
+        function: String,
+        expected: Type,
+        found: Type,
+    },
+    /// The condition of an `if` or `while` (`statement`) is not a `bool`,
+    /// such as `if 10 { … }`.
+    InvalidCondition {
+        statement: &'static str,
+        found: Type,
+    },
+    /// A function with a return type other than `unit` can reach the end
+    /// of its body without returning a value.
+    MissingReturn { function: String, expected: Type },
     /// A binary operator applied to operand types it has no rule for, such
     /// as `10 + "hello"` or `1 < true` (see `rules.rs`).
     InvalidBinaryOperation {
@@ -87,6 +105,27 @@ impl TypeError {
                 found,
             } => format!(
                 "argument {position} of `{function}` (`{parameter}`) has type `{found}`, but `{function}` expects `{expected}`"
+            ),
+            TypeErrorKind::InvalidReturn {
+                function,
+                expected,
+                found,
+            } => match (expected, found) {
+                (_, Type::Unit) => {
+                    format!("`{function}` must return `{expected}`, but this returns no value")
+                }
+                (Type::Unit, _) => format!(
+                    "`{function}` has no return type, so it cannot return a value of type `{found}`"
+                ),
+                _ => format!(
+                    "`{function}` must return `{expected}`, but this returns `{found}`"
+                ),
+            },
+            TypeErrorKind::InvalidCondition { statement, found } => {
+                format!("the condition of `{statement}` must be `bool`, found `{found}`")
+            }
+            TypeErrorKind::MissingReturn { function, expected } => format!(
+                "`{function}` may reach its end without returning a value of type `{expected}`"
             ),
             TypeErrorKind::InvalidBinaryOperation {
                 operator,

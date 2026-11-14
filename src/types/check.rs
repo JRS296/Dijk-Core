@@ -107,6 +107,35 @@
 //! the right *number* of arguments, are questions about names that
 //! semantic analysis has already answered.
 //!
+//! # Returns and conditions
+//!
+//! Inside a body, the signature's return type is what every `return`
+//! must produce: `return value;` checks the value against it (so a
+//! literal there takes the return type), a bare `return;` produces
+//! `unit`, and so is only allowed in a function without `-> T`. The
+//! condition of every `if` and `while` must be a `bool`: Dijk has no
+//! "truthiness", so `if 1` is a type error, not "true because non-zero".
+//!
+//! # Return paths
+//!
+//! Checking each `return` is not the same as knowing that the function
+//! *does* return. This passes the first test and fails the second:
+//!
+//! ```dijk
+//! fn get_number() -> i32 {
+//!     if true {
+//!         return 10;
+//!     }
+//! }
+//! ```
+//!
+//! The checker does not evaluate `true`, so as far as it can tell the
+//! `if` might be skipped, and then the function would reach its end with
+//! no value to return. A function that returns something other than
+//! `unit` must *definitely return*, which is decided from the shape of
+//! its body alone (see [`always_returns`]). This is the checker's first,
+//! very small, piece of control-flow analysis.
+//!
 //! # Assignments
 //!
 //! `x = value` stores a new value in an existing variable, so the value
@@ -137,6 +166,8 @@ pub fn check_program(program: &Program) -> Result<TypedProgram, Vec<TypeError>> 
         signatures: HashMap::new(),
         env: TypeEnvironment::new(),
         bindings: Vec::new(),
+        function: String::new(),
+        return_type: Type::Unit,
         errors: Vec::new(),
     };
 
@@ -178,6 +209,10 @@ struct Checker {
     env: TypeEnvironment,
     /// Every variable the function being checked has declared so far.
     bindings: Vec<Binding>,
+    /// The name and return type of the function being checked: what its
+    /// `return` statements are checked against.
+    function: String,
+    return_type: Type,
     errors: Vec<TypeError>,
 }
 
@@ -232,6 +267,8 @@ impl Checker {
     fn check_function(&mut self, function: &Function, signature: FunctionSignature) {
         self.env = TypeEnvironment::new();
         self.bindings = Vec::new();
+        self.function = function.name.clone();
+        self.return_type = signature.return_type;
 
         for (param, (_, ty)) in function.params.iter().zip(&signature.params) {
             // A parameter's span starts at its name (`a: i32`).
@@ -242,6 +279,22 @@ impl Checker {
         // The body's top-level statements live in the function scope,
         // alongside the parameters.
         self.check_statements(&function.body);
+
+        // A function that returns a value must return one on every path.
+        // (With an unknown return type, already reported, there is
+        // nothing to check against.)
+        let returns_a_value = !matches!(self.return_type, Type::Unit | Type::Error);
+        if returns_a_value && !always_returns(&function.body) {
+            // Reported at the closing `}`: where execution would run out.
+            let end = function.span.end;
+            self.error(
+                TypeErrorKind::MissingReturn {
+                    function: function.name.clone(),
+                    expected: self.return_type,
+                },
+                Span::new(end.saturating_sub(1), end),
+            );
+        }
 
         self.typed.functions.push(TypedFunction {
             name: function.name.clone(),
@@ -288,11 +341,7 @@ impl Checker {
                 value,
                 ..
             } => self.check_let(name, *name_span, *mutable, type_annotation.as_ref(), value),
-            Statement::Return { value, .. } => {
-                if let Some(value) = value {
-                    self.check_expression(value, None);
-                }
-            }
+            Statement::Return { value, span } => self.check_return(value.as_ref(), *span),
             Statement::Expression { expr, .. } => {
                 self.check_expression(expr, None);
             }
@@ -302,7 +351,7 @@ impl Checker {
                 else_branch,
                 ..
             } => {
-                self.check_expression(condition, None);
+                self.check_condition(condition, "if");
                 self.check_block(then_branch);
                 if let Some(else_branch) = else_branch {
                     self.check_block(else_branch);
@@ -311,9 +360,43 @@ impl Checker {
             Statement::While {
                 condition, body, ..
             } => {
-                self.check_expression(condition, None);
+                self.check_condition(condition, "while");
                 self.check_block(body);
             }
+        }
+    }
+
+    /// `return value;` or `return;`, against the return type of the
+    /// function it is in.
+    fn check_return(&mut self, value: Option<&Expression>, span: Span) {
+        let expected = self.return_type;
+        let (found, at) = match value {
+            Some(value) => (self.check_expression(value, Some(expected)), value.span()),
+            // A bare `return;` returns no value.
+            None => (Type::Unit, span),
+        };
+
+        if !Type::compatible(expected, found) {
+            self.error(
+                TypeErrorKind::InvalidReturn {
+                    function: self.function.clone(),
+                    expected,
+                    found,
+                },
+                at,
+            );
+        }
+    }
+
+    /// The condition of an `if` or a `while` (named by `statement`) must
+    /// be a `bool`.
+    fn check_condition(&mut self, condition: &Expression, statement: &'static str) {
+        let found = self.check_expression(condition, Some(Type::Bool));
+        if !Type::compatible(Type::Bool, found) {
+            self.error(
+                TypeErrorKind::InvalidCondition { statement, found },
+                condition.span(),
+            );
         }
     }
 
@@ -599,6 +682,43 @@ impl Checker {
                 Type::Error
             }
         }
+    }
+}
+
+/// Whether running `statements` in order is certain to end in a `return`,
+/// judged from their shape alone, without evaluating anything:
+///
+/// ```text
+/// a block            returns if any of its statements returns (the
+///                    statements after that one can never run)
+/// return             returns
+/// if … else …        returns if both branches return
+/// if … (no else)     does not: the condition might be false
+/// while …            does not: the condition might be false the first
+///                    time, even `while true`, since the checker never
+///                    evaluates a condition
+/// let, expression    do not
+/// ```
+///
+/// This is conservative: it never claims a function returns when it might
+/// not, but it rejects some functions that always do in practice, such as
+/// one whose only `return` is inside `while true { … }`.
+fn always_returns(statements: &[Statement]) -> bool {
+    statements.iter().any(statement_always_returns)
+}
+
+fn statement_always_returns(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Return { .. } => true,
+        Statement::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => always_returns(then_branch) && always_returns(else_branch),
+        Statement::If {
+            else_branch: None, ..
+        } => false,
+        Statement::While { .. } | Statement::Let { .. } | Statement::Expression { .. } => false,
     }
 }
 
