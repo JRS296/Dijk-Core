@@ -86,9 +86,14 @@ pub struct TypedFunction {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
     pub name: String,
-    /// Where the variable was declared: its `let` statement.
+    /// Where the variable's name was written in its declaration.
     pub span: Span,
     pub ty: Type,
+    /// Whether the variable was declared `let mut`. This is not part of
+    /// its type: mutability says whether a *binding* may change, a type
+    /// says what kind of value it holds. It is recorded here because this
+    /// is the record of every binding, not because the checker uses it.
+    pub mutable: bool,
     /// How deeply nested the declaring scope is: 0 for the function
     /// scope, 1 for a block directly inside it, and so on.
     pub depth: usize,

@@ -107,11 +107,13 @@ fn let_without_type_annotation() {
     let f = single_function("fn main() {\n    let x = 10;\n}\n");
     match &f.body[0] {
         Statement::Let {
+            mutable,
             name,
             type_annotation,
             value,
             ..
         } => {
+            assert!(!mutable, "a plain `let` is immutable");
             assert_eq!(name, "x");
             assert!(type_annotation.is_none());
             assert!(matches!(value, Expression::Integer(10, _)));
@@ -142,6 +144,79 @@ fn let_with_type_annotation() {
         }
         other => panic!("expected Let, got {other:?}"),
     }
+}
+
+#[test]
+fn let_mut_declares_a_mutable_binding() {
+    let f = single_function("fn main() {\n    let mut count = 0;\n}\n");
+    match &f.body[0] {
+        Statement::Let {
+            mutable,
+            name,
+            type_annotation,
+            ..
+        } => {
+            assert!(mutable);
+            assert_eq!(name, "count");
+            assert!(type_annotation.is_none());
+        }
+        other => panic!("expected Let, got {other:?}"),
+    }
+}
+
+#[test]
+fn let_mut_with_type_annotation() {
+    let f = single_function("fn main() {\n    let mut total: i64 = 0;\n}\n");
+    match &f.body[0] {
+        Statement::Let {
+            mutable,
+            name,
+            type_annotation,
+            ..
+        } => {
+            assert!(mutable);
+            assert_eq!(name, "total");
+            assert_eq!(type_annotation.as_ref().unwrap().name, "i64");
+        }
+        other => panic!("expected Let, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_let_records_where_its_name_was_written() {
+    let source = "fn main() {\n    let a = 1;\n    let mut b = 2;\n}\n";
+    let f = single_function(source);
+    for (stmt, name) in f.body.iter().zip(["a", "b"]) {
+        match stmt {
+            Statement::Let { name_span, .. } => {
+                assert_eq!(&source[name_span.start..name_span.end], name);
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+    // The statement's own span still covers all of it, `mut` included.
+    let span = f.body[1].span();
+    assert_eq!(&source[span.start..span.end], "let mut b = 2;");
+}
+
+#[test]
+fn let_mut_without_a_name_is_an_error() {
+    let errors = parse_errors("fn main() {\n    let mut = 1;\n}\n");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].to_string(), "expected identifier, found '='");
+}
+
+#[test]
+fn mut_is_only_valid_directly_after_let() {
+    // `mut` is not an expression, and `mut` cannot repeat.
+    assert_eq!(
+        parse_errors("fn main() {\n    mut x = 1;\n}\n")[0].to_string(),
+        "expected expression, found 'mut'"
+    );
+    assert_eq!(
+        parse_errors("fn main() {\n    let mut mut x = 1;\n}\n")[0].to_string(),
+        "expected identifier, found 'mut'"
+    );
 }
 
 // --- expressions and precedence ---

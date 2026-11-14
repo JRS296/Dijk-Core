@@ -229,8 +229,10 @@ impl Parser {
         }
     }
 
+    /// `let_statement ::= "let" "mut"? identifier (":" type)? "=" expression ";"`
     fn parse_let_statement(&mut self) -> Result<Statement, ParseError> {
         let let_tok = self.advance();
+        let mutable = self.match_token(TokenKind::Mut);
         let name_tok = self.expect(TokenKind::Identifier, "identifier")?;
         let type_annotation = if self.match_token(TokenKind::Colon) {
             Some(self.parse_type()?)
@@ -242,7 +244,9 @@ impl Parser {
         let semi = self.expect(TokenKind::Semicolon, "';'")?;
         let span = Span::new(let_tok.span.start, semi.span.end);
         Ok(Statement::Let {
+            mutable,
             name: name_tok.lexeme,
+            name_span: name_tok.span,
             type_annotation,
             value,
             span,

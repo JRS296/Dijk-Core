@@ -174,12 +174,13 @@ impl Checker {
     }
 
     /// Declare a variable in the innermost scope, and record it.
-    fn declare(&mut self, name: &str, span: Span, ty: Type) {
+    fn declare(&mut self, name: &str, span: Span, ty: Type, mutable: bool) {
         self.env.declare(name, ty);
         self.bindings.push(Binding {
             name: name.to_string(),
             span,
             ty,
+            mutable,
             depth: self.env.depth(),
         });
     }
@@ -189,11 +190,13 @@ impl Checker {
     fn check_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Let {
+                mutable,
                 name,
+                name_span,
                 type_annotation,
                 value,
-                span,
-            } => self.check_let(name, type_annotation.as_ref(), value, *span),
+                ..
+            } => self.check_let(name, *name_span, *mutable, type_annotation.as_ref(), value),
             Statement::Return { value, .. } => {
                 if let Some(value) = value {
                     self.check_expression(value, None);
@@ -232,9 +235,10 @@ impl Checker {
     fn check_let(
         &mut self,
         name: &str,
+        name_span: Span,
+        mutable: bool,
         annotation: Option<&TypeAnnotation>,
         value: &Expression,
-        span: Span,
     ) {
         let ty = match annotation {
             None => self.check_expression(value, None),
@@ -262,7 +266,7 @@ impl Checker {
                 }
             },
         };
-        self.declare(name, span, ty);
+        self.declare(name, name_span, ty, mutable);
     }
 
     // --- expressions ---

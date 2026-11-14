@@ -125,13 +125,21 @@ discards it).
 
 ```text
 Statement
-├── Let         { name, type_annotation: Option<Type>, value: Expression, span }
+├── Let         { mutable: bool, name, name_span, type_annotation: Option<Type>,
+│                 value: Expression, span }
 ├── Return      { value: Option<Expression>, span }
 ├── Expression  { expr: Expression, span }
 ├── If          { condition, then_branch: Vec<Statement>,
 │                 else_branch: Option<Vec<Statement>>, span }
 └── While       { condition, body: Vec<Statement>, span }
 ```
+
+A `Let` records two facts about the binding it introduces, beyond its
+name: whether it was declared `let mut` (`mutable`), and where the name
+itself was written (`name_span`, the *binding site*, distinct from the
+statement's `span`, which starts at `let`). The printed tree shows a
+`Mutable: true` line for a `let mut`, and nothing extra for a plain
+`let`, the default.
 
 `else if` is not a distinct case. `if a {} else if b {} else {}` parses
 `else if` as an `else_branch` containing exactly one statement, itself an

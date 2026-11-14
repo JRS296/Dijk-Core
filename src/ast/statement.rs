@@ -6,8 +6,17 @@ use crate::lexer::token::Span;
 /// a value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    /// `let name = value;`, or `let mut name: Type = value;`.
+    ///
+    /// `mutable` records whether the binding was declared `mut`, that is,
+    /// whether the program may later assign to it. `name_span` is where
+    /// the name itself was written: the *binding site*. With an optional
+    /// `mut` between `let` and the name, the statement's span no longer
+    /// says where the name is.
     Let {
+        mutable: bool,
         name: String,
+        name_span: Span,
         type_annotation: Option<Type>,
         value: Expression,
         span: Span,

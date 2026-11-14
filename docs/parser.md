@@ -67,7 +67,7 @@ statement   ::= let_statement
               | while_statement
               | expression_statement
 
-let_statement ::= "let" identifier (":" type)? "=" expression ";"
+let_statement ::= "let" "mut"? identifier (":" type)? "=" expression ";"
 
 return_statement ::= "return" expression? ";"
 
@@ -109,6 +109,13 @@ call        ::= identifier "(" arguments? ")"
 
 arguments   ::= expression ("," expression)*
 ```
+
+`mut` marks a binding as mutable: `let mut count = 0;` may later be
+assigned to, `let limit = 10;` may not. The parser only records which
+one was written (`Statement::Let`'s `mutable` flag, see `docs/ast.md`);
+enforcing it is semantic analysis's job (`docs/semantic.md`). `mut` is
+valid only directly after `let`: parameters have no way to be declared
+mutable.
 
 A call's callee is currently always a plain identifier naming a function —
 not a general expression. Dijk has no first-class functions (no way to

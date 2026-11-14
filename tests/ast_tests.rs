@@ -195,7 +195,9 @@ fn statement_span_accessor_covers_every_variant() {
     let expr = Expression::Integer(1, s);
     assert_eq!(
         Statement::Let {
+            mutable: false,
             name: "x".to_string(),
+            name_span: s,
             type_annotation: None,
             value: expr.clone(),
             span: s

@@ -87,12 +87,18 @@ fn block_docs(statements: &[Statement]) -> Vec<Doc> {
 fn stmt_doc(stmt: &Statement) -> Doc {
     match stmt {
         Statement::Let {
+            mutable,
             name,
             type_annotation,
             value,
             ..
         } => {
             let mut children = vec![Doc::Leaf(format!("Name: {name}"))];
+            // Shown only for `let mut`, so that an immutable binding, the
+            // default, prints exactly as it always has.
+            if *mutable {
+                children.push(Doc::Leaf("Mutable: true".to_string()));
+            }
             if let Some(ty) = type_annotation {
                 children.push(Doc::Leaf(format!("Type: {}", ty.name)));
             }

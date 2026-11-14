@@ -847,3 +847,18 @@ fn each_function_has_its_own_bindings() {
         .collect();
     assert_eq!(names, vec![("helper", vec!["h"]), ("main", vec!["m"])]);
 }
+
+#[test]
+fn a_binding_records_where_its_name_is_and_whether_it_is_mutable() {
+    let source = in_main("let a = 1;\nlet mut b: i64 = 2;");
+    let typed = typed(&source);
+    let bindings = &typed.functions[0].bindings;
+    let a = source.find("a = 1").unwrap();
+    assert_eq!(bindings[0].span, Span::new(a, a + 1));
+    assert!(!bindings[0].mutable);
+    // The name itself, not the `let` or the `mut` before it.
+    let b = source.find("b: i64").unwrap();
+    assert_eq!(bindings[1].span, Span::new(b, b + 1));
+    assert!(bindings[1].mutable);
+    assert_eq!(bindings[1].ty, Type::I64);
+}

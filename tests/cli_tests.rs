@@ -22,12 +22,17 @@ fn stderr_of(output: &std::process::Output) -> String {
 }
 
 /// Write `source` to a scratch `.dk` file in the system's temporary
-/// directory and `dijk run` it, for programs not worth keeping as a
-/// fixture in `examples/`.
-fn run_source(name: &str, source: &str) -> std::process::Output {
+/// directory, for programs not worth keeping as a fixture in `examples/`,
+/// and return its path.
+fn scratch_file(name: &str, source: &str) -> String {
     let path = std::env::temp_dir().join(format!("dijk-cli-test-{name}.dk"));
     std::fs::write(&path, source).expect("failed to write a scratch source file");
-    run(&["run", path.to_str().unwrap()])
+    path.to_str().unwrap().to_string()
+}
+
+/// `dijk run` a scratch file holding `source`.
+fn run_source(name: &str, source: &str) -> std::process::Output {
+    run(&["run", &scratch_file(name, source)])
 }
 
 #[test]
@@ -70,6 +75,27 @@ fn parse_reports_a_diagnostic_and_exits_nonzero_on_a_broken_program() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("error:"));
+}
+
+#[test]
+fn parse_and_ast_show_which_let_bindings_are_mutable() {
+    let path = scratch_file(
+        "let-mut",
+        "fn main() {\n    let mut count = 0;\n    let limit = 10;\n}\n",
+    );
+    for command in ["parse", "ast"] {
+        let output = run(&[command, &path]);
+        assert!(output.status.success());
+        let stdout = stdout_of(&output);
+        // Only the `let mut` gets the extra line, right after its name.
+        let lines: Vec<&str> = stdout.lines().collect();
+        let name = lines
+            .iter()
+            .position(|line| line.ends_with("Name: count"))
+            .unwrap();
+        assert!(lines[name + 1].ends_with("├── Mutable: true"));
+        assert_eq!(stdout.matches("Mutable: true").count(), 1);
+    }
 }
 
 // --- dijk run ---
