@@ -1,6 +1,6 @@
 # Dijk Core
 
-**Dijk 0.0.4** — experimental / educational development release. Grammar,
+**Dijk 0.0.5** — experimental / educational development release. Grammar,
 ABI, standard library, compiler compatibility, and runtime behavior are
 all still unstable. See [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,22 +27,25 @@ implementation teaches how a language and its compiler are actually built.
 ✓ Lexical analysis (dijk lex, .dk and .dijk source files)
 ✓ Parsing (dijk parse)
 ✓ AST (dijk ast)
-✓ Semantic analysis: name resolution and lexical scopes
-✓ Interpretation (dijk run): a tree-walking interpreter
-□ Type checking
+✓ Semantic analysis: name resolution, lexical scopes, and immutable bindings
+✓ Static type checking (dijk check, dijk check --types): i32, i64, bool, string
+✓ Interpretation (dijk run): a tree-walking interpreter, for well-typed programs
+□ Memory model
 □ Intermediate representation
 □ Native compilation
 ```
 
-`0.0.4` is the first version in which Dijk programs *run*: `dijk run`
-takes a program through every stage (lex → parse → semantic analysis →
-interpret) and prints the value `main` returns. It is still
-intentionally small. Semantic analysis resolves names and scopes but does
-not check types (see [docs/semantic.md](docs/semantic.md)), so a mistake
-like `1 + true` is found only at run time (see
-[docs/interpreter.md](docs/interpreter.md)). There is no `print` yet, and
-no compiler. See [docs/](docs/) for the philosophy, design constraints,
-architecture, and roadmap that govern implementation.
+`0.0.5` gives Dijk a **static type system**. `dijk check` takes a program
+through every stage up to type checking (lex → parse → semantic
+analysis → type checking) without running it, and `dijk run` runs only
+programs that pass. A mistake like `1 + true`, which `0.0.4` found only
+at run time, is now a type error found before anything executes (see
+[docs/types.md](docs/types.md)). Variables are immutable unless declared
+`let mut`, and integers are `i32` or `i64`, at compile time and at run
+time alike. It is still intentionally small: there are no conversions
+between types, no `print`, and no compiler yet. See [docs/](docs/) for
+the philosophy, design constraints, architecture, and roadmap that
+govern implementation.
 
 ## Project trajectory
 

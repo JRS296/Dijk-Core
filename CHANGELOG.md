@@ -1,5 +1,145 @@
 # Changelog
 
+## [0.0.5] - 2026-11-14
+
+Experimental / educational development release. Grammar, ABI, standard
+library, compiler compatibility, and runtime behavior are all still
+unstable.
+
+The first release with a static type system: every program is
+type-checked before it runs, and a program with a type error never runs.
+
+### Added
+
+- Type representation (`src/types/ty.rs`): `Type` with `i32`, `i64`,
+  `bool`, `string` and `unit`, equality, display, and resolution of
+  annotations. Only `i32`, `i64`, `bool` and `string` can be written.
+  An internal `Type::Error` lets the checker report each mistake once
+- Literal typing: integer literals take the integer type their context
+  expects (annotation, parameter, return type, assigned variable, other
+  operand), defaulting to `i32`, and are range-checked against it.
+  `-2147483648` is one literal
+- Operator typing rules as one table (`src/types/rules.rs`): `+ - * /`
+  on same-type integers (`+` also on strings), `< <= > >=` on same-type
+  integers, `== !=` on any same type but `unit`, unary `-` on integers,
+  `!` on `bool`. No implicit conversions: `i32` and `i64` never mix
+- The type environment Γ (`src/types/env.rs`), local type inference for
+  `let`, checking of annotated `let`s, and shadowing consistent with
+  semantic analysis
+- `let mut`: `Statement::Let` gains `mutable` and `name_span`, and the
+  AST printer shows `Mutable: true` for mutable bindings
+- Immutable bindings, enforced by semantic analysis: assigning to a plain
+  `let` or to a parameter is a semantic error
+- Assignment type checking, function signatures (collected before any
+  body, so forward references and recursion work), argument type
+  checking at every call, return statement checking, `bool` conditions,
+  and return-path analysis (a function with `-> T` must return on every
+  path)
+- `types::check(&Program) -> Result<TypedProgram, Vec<TypeError>>`. A
+  `TypedProgram` records each function's signature and bindings (name,
+  span, type, mutability, block depth) and each expression's type, keyed
+  by span
+- `dijk check <file>` (`.dk` and `.dijk`): a per-stage report (lexical
+  analysis, parsing, semantic analysis, type checking) that stops at the
+  first failing stage and never runs the program. Exit code 0 only for a
+  well-typed program
+- `dijk check --types <file>`: each function's signature and the
+  inferred type of every variable, with its position, `mut` marker and
+  block nesting. This is the typing environment made visible
+- Source-aware type diagnostics with stable codes E0001–E0010, rendered
+  as `type error[E000N]:` with the whole offending expression underlined
+  and `expected`/`found` notes (`diagnostics::render_with_notes`)
+- Runtime values `Value::I32` and `Value::I64`: the interpreter builds
+  each integer literal at the type the checker gave it
+- Examples: `examples/add.dk` (well-typed) and `examples/type_error.dk`
+- `dijk --help` and `dijk doctor` describe the type checker and
+  `dijk check`
+
+### Changed / Breaking
+
+- **`let mut` is now required for assignment.** `let x = 1; x = 2;` is a
+  semantic error, and so is assigning to a parameter (parameters are
+  always immutable). Programs that reassign variables must declare them
+  `let mut`
+- **`fn main()` without `-> T` returns `unit`**, like every function
+  without a return type, so `return value;` in it is a type error
+  (E0005). The 0.0.4 milestone program needs `fn main() -> i32`
+- **Integers are now `i32` or `i64`**, statically and at run time.
+  `Value::Integer(i64)` is replaced by `Value::I32`/`Value::I64`, a literal
+  with no context is an `i32`, and `i32` arithmetic overflows at 32 bits
+  (`2147483647 + 1` is a runtime error; `factorial(13)` overflows an
+  `i32`). Overflow errors name the type: `does not fit in `i32``
+- **Type errors stop programs before they run.** `1 + true`, `if 5 { }`,
+  `"a" - "b"`, unknown type names such as `let x: banana = …` and
+  out-of-range literals were runtime errors, or silently accepted, in
+  0.0.4. The interpreter's `invalid operation` errors remain only as
+  guards for unchecked programs, and runtime kind names are now type
+  names (`i32`, `bool`, …)
+- `interpreter::run` takes the `TypedProgram` as well as the `Program`
+- `Expression::Integer` holds a `u64` (the literal's digits) instead of an
+  `i64`. Digits up to 64 bits parse. Whether the value fits is now always
+  the type checker's E0010, so `9223372036854775808` is a type error
+  rather than a parse error. Only a literal beyond 64 bits is still a
+  parse error (`integer literal '…' is too large`)
+- Diagnostic positions count characters instead of bytes (see Fixed)
+- Examples updated for the above: `hello.dk`, `hello.dijk`,
+  `factorial.dk`, `runtime_error.dk` and `semantic_error.dk` now declare
+  `fn main() -> i32`
+
+### Fixed
+
+- A non-ASCII character outside a string or comment is reported once, as
+  the character it is, with its code point
+  (`unexpected character 'é' (U+00E9)`), instead of once per UTF-8 byte
+  as mojibake. Only ASCII characters count as whitespace
+- Diagnostic columns, carets and underlines count characters, not bytes,
+  so they line up after non-ASCII text. This applies to every stage and
+  to `dijk check --types` positions
+- Files with Windows line endings (`\r\n`) no longer show a stray `\r`
+  at the end of the source line in diagnostics
+- A tab before the problem no longer misaligns the caret: the caret line
+  repeats the source line's tabs
+- The smallest `i64` can be written as a literal: `-9223372036854775808`
+- Line endings are normalized: a new `.gitattributes` (`* text=auto`)
+  stores every text file with LF. The five files that were committed with
+  CRLF (`docs/ast.md`, `docs/parser.md`, `src/ast/expression.rs`,
+  `src/ast/visit.rs`, `src/parser/error.rs`) were converted
+
+### Testing
+
+- `tests/types_tests.rs` (133 tests): unit tests of every piece of the
+  `types` module, added with each piece
+- `tests/type_tests/` (104 tests): the language-level suite, with one
+  file per typing rule (literals, operators, variables, assignments,
+  functions, returns, conditions, errors), valid and invalid programs
+  asserted by diagnostic code, and a pipeline test proving that a
+  type-invalid program never reaches the interpreter
+- `tests/interpreter_tests.rs`: runs through the type checker; `i32` and
+  `i64` values, overflow in both, `i32` and `i64` factorials, and the
+  interpreter's guards on unchecked programs
+- `tests/semantic_tests.rs`: immutable bindings and parameters, including
+  under shadowing
+- `tests/parser_tests.rs`, `tests/ast_tests.rs`: `let mut`
+- `tests/cli_tests.rs`: `dijk check` on `.dk` and `.dijk`, exit codes,
+  stopping at the first failing stage, `dijk check --types`, and
+  `dijk run` refusing to execute a program with a type error
+- `tests/lexer_tests.rs`, `tests/parser_tests.rs`, `tests/cli_tests.rs`:
+  non-ASCII characters, character columns, CRLF files, tabs, and
+  64-bit literals
+- 507 tests in total
+
+### Documentation
+
+- `docs/types.md`: the types, compatibility policy, typing judgments,
+  operator table, inference policy, functions, return paths, diagnostic
+  codes, `dijk check` and `--types`, implementation, and limitations
+- `docs/lexer.md` (non-ASCII text and whitespace), `docs/language.md`,
+  `docs/semantic.md` (mutability),
+  `docs/interpreter.md` (`i32`/`i64`, overflow), `docs/architecture.md`
+  (pipeline and dependency direction), `docs/testing.md`, `docs/ast.md`,
+  `docs/parser.md` (`let mut`), `docs/roadmap.md`, and the README
+- `dijkstra-book` Chapter 09 — Static Types
+
 ## [0.0.4] - 2026-11-14
 
 Experimental / educational development release. Grammar, ABI, standard

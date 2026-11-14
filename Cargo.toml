@@ -1,8 +1,8 @@
 [package]
 name = "dijk"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
-description = "Dijk Core — the foundational Dijk language and compiler (lexer, parser, AST, semantic analysis, and interpreter implemented)"
+description = "Dijk Core — the foundational Dijk language and compiler (lexer, parser, AST, semantic analysis, static type checker, and interpreter implemented)"
 license = "Apache-2.0"
 
 [[bin]]
