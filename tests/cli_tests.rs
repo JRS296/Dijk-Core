@@ -189,10 +189,89 @@ fn check_reports_every_type_error() {
 fn check_requires_a_dijk_source_file() {
     let output = run(&["check"]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(stderr_of(&output).contains("usage: dijk check <file>"));
+    assert!(stderr_of(&output).contains("usage: dijk check [--types] <file>"));
     let output = run(&["check", "examples/hello.txt"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr_of(&output).contains("is not a Dijk source file"));
+}
+
+// --- dijk check --types ---
+
+#[test]
+fn check_types_prints_signatures_and_bindings() {
+    let output = run(&["check", "--types", "examples/add.dk"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout_of(&output),
+        format!(
+            "Checking examples/add.dk...\n{WELL_TYPED_REPORT}\nfn add(a: i32, b: i32) -> i32\n    a      : i32   (1:8)\n    b      : i32   (1:16)\n    result : i32   (2:9)\nfn main() -> i32\n"
+        )
+    );
+}
+
+#[test]
+fn check_types_accepts_dk_and_dijk_identically() {
+    let dk = run(&["check", "--types", "examples/hello.dk"]);
+    let dijk = run(&["check", "--types", "examples/hello.dijk"]);
+    assert_eq!(dk.status.code(), Some(0));
+    assert_eq!(dijk.status.code(), Some(0));
+    let listing = "fn main() -> i32\n    x : i32   (2:9)\n    y : i32   (3:9)\n";
+    assert!(stdout_of(&dk).ends_with(listing));
+    assert!(stdout_of(&dijk).ends_with(listing));
+}
+
+#[test]
+fn check_types_shows_the_types_literals_were_given() {
+    // With no context a literal is an `i32`; an annotation, or an `i64`
+    // on the other side of an operator, makes it an `i64`.
+    let path = scratch_file(
+        "inferred-literals",
+        "fn main() -> i64 {\n    let small = 1;\n    let big: i64 = 2;\n    let sum = big + 3;\n    return sum;\n}\n",
+    );
+    let output = run(&["check", "--types", &path]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout_of(&output).ends_with(
+        "fn main() -> i64\n    small : i32   (2:9)\n    big   : i64   (3:9)\n    sum   : i64   (4:9)\n"
+    ));
+}
+
+#[test]
+fn check_types_lists_shadowed_bindings_separately_and_marks_mut() {
+    let path = scratch_file(
+        "shadowing",
+        "fn main() {\n    let x = 1;\n    if x > 0 {\n        let x = \"inner\";\n        let mut count = 0;\n        count = count + 1;\n    }\n}\n",
+    );
+    let output = run(&["check", "--types", &path]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout_of(&output).ends_with(
+        "fn main() -> unit\n    x         : i32      (2:9)\n        x     : string   (4:13)\n        count : i32      (5:17)  mut\n"
+    ));
+}
+
+#[test]
+fn check_types_accepts_the_flag_after_the_file_too() {
+    let before = run(&["check", "--types", "examples/add.dk"]);
+    let after = run(&["check", "examples/add.dk", "--types"]);
+    assert_eq!(after.status.code(), Some(0));
+    assert_eq!(before.stdout, after.stdout);
+}
+
+#[test]
+fn check_types_prints_no_listing_for_a_program_with_type_errors() {
+    let output = run(&["check", "--types", "examples/type_error.dk"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = stdout_of(&output);
+    assert!(stdout.ends_with("Type checking          FAILED (1 error)\n"));
+    assert!(!stdout.contains("fn main"));
+    assert!(stderr_of(&output).starts_with("type error[E0001]: type mismatch\n"));
+}
+
+#[test]
+fn check_rejects_unknown_options() {
+    let output = run(&["check", "--typo", "examples/add.dk"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr_of(&output).contains("unknown option '--typo'"));
+    assert_eq!(stdout_of(&output), "");
 }
 
 // --- dijk run ---

@@ -1684,3 +1684,12 @@ fn other_stages_keep_their_single_caret() {
     let plain = diagnostics::render("a.dk", source, Span::new(8, 11), "error", "oops");
     assert!(plain.ends_with("1 | let x = abc;\n  |         ^\n"));
 }
+
+#[test]
+fn positions_are_one_based_lines_and_columns() {
+    // How `dijk check --types` and every diagnostic locate a span.
+    let source = "fn main() {\n    let x = 1;\n}\n";
+    let x = source.find('x').unwrap();
+    assert_eq!(diagnostics::line_and_column(source, x), (2, 9));
+    assert_eq!(diagnostics::line_and_column(source, 0), (1, 1));
+}

@@ -37,6 +37,9 @@ COMMANDS:
     ast <file>   Print the AST plus node counts, for the same file
     check <file> Check a program through every stage up to type checking,
                  without running it
+    check --types <file>
+                 Check a program, then print each function's signature and
+                 the type of every variable it declares
     run <file>   Check a program, then run it and print the value its
                  main returns
 ";
@@ -73,12 +76,30 @@ fn main() {
             ast(&path);
         }
         Some("check") => {
-            let Some(path) = args.next() else {
+            let mut show_types = false;
+            let mut path = None;
+            for arg in args {
+                match arg.as_str() {
+                    "--types" => show_types = true,
+                    option if option.starts_with("--") => {
+                        eprintln!("dijk: unknown option '{option}' for 'check'");
+                        eprintln!("usage: dijk check [--types] <file>");
+                        std::process::exit(1);
+                    }
+                    _ if path.is_none() => path = Some(arg),
+                    _ => {
+                        eprintln!("dijk: 'check' takes one file, found another: '{arg}'");
+                        eprintln!("usage: dijk check [--types] <file>");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            let Some(path) = path else {
                 eprintln!("dijk: 'check' requires a file argument");
-                eprintln!("usage: dijk check <file>");
+                eprintln!("usage: dijk check [--types] <file>");
                 std::process::exit(1);
             };
-            check(&path);
+            check(&path, show_types);
         }
         Some("run") => {
             let Some(path) = args.next() else {
@@ -225,7 +246,12 @@ const STAGE_COLUMN: usize = 23;
 /// with every other command. Exit code 0 means the program is well-typed
 /// (which says nothing about whether it will run without a runtime
 /// error); 1 means some stage rejected it.
-fn check(path: &str) {
+///
+/// With `show_types` (`dijk check --types`), a well-typed program's report
+/// is followed by what the type checker learned: every function's
+/// signature and the type of every variable it declares (see
+/// `pretty::print_types`). Nothing is printed for a program that fails.
+fn check(path: &str, show_types: bool) {
     let source = read_source_file(path);
     println!("Checking {path}...");
 
@@ -250,14 +276,22 @@ fn check(path: &str) {
     }
     pass_stage("Semantic analysis");
 
-    if let Err(type_errors) = types::check(&program) {
-        let diagnostics = type_errors.iter().map(|e| e.render(path, &source));
-        fail_stage("Type checking", diagnostics.collect());
-    }
+    let typed = match types::check(&program) {
+        Ok(typed) => typed,
+        Err(type_errors) => {
+            let diagnostics = type_errors.iter().map(|e| e.render(path, &source));
+            fail_stage("Type checking", diagnostics.collect());
+        }
+    };
     pass_stage("Type checking");
 
     println!();
     println!("Program is well-typed.");
+
+    if show_types {
+        println!();
+        print!("{}", pretty::print_types(&typed, &source));
+    }
 }
 
 fn pass_stage(stage: &str) {

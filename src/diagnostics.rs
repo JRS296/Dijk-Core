@@ -67,6 +67,13 @@ pub fn render_with_notes(
     rendered
 }
 
+/// The 1-based line and column of byte `offset` in `source`, as
+/// diagnostics show them (`main.dk:2:18`).
+pub fn line_and_column(source: &str, offset: usize) -> (usize, usize) {
+    let location = locate(source, offset);
+    (location.line, location.column)
+}
+
 /// Where an offset falls in the source, for display.
 struct Location<'s> {
     /// 1-based line number.

@@ -15,6 +15,7 @@
 // their diagnostic rendering goes unused, hence the `allow`s.
 #[path = "../src/ast/mod.rs"]
 mod ast;
+#[allow(dead_code)]
 #[path = "../src/diagnostics.rs"]
 mod diagnostics;
 #[path = "../src/interpreter/mod.rs"]

@@ -1,11 +1,14 @@
 //! Renders Dijk's AST as an indented tree, for `dijk parse` and
-//! `dijk ast`. This is presentation only — it has no bearing on the AST
-//! itself (`src/ast/`).
+//! `dijk ast`, and what the type checker learned about a program, for
+//! `dijk check --types`. This is presentation only — it has no bearing on
+//! the AST itself (`src/ast/`) or on the checker (`src/types/`).
 
 use crate::ast::declaration::{Declaration, Function, Program};
 use crate::ast::expression::Expression;
 use crate::ast::statement::Statement;
 use crate::ast::visit::{self, Visitor};
+use crate::diagnostics;
+use crate::types::{TypedFunction, TypedProgram};
 
 enum Doc {
     Leaf(String),
@@ -210,4 +213,81 @@ fn render_children(out: &mut String, children: &[Doc], prefix: &str) {
             }
         }
     }
+}
+
+/// The typing environment of every function, as `dijk check --types`
+/// prints it: the function's signature, then every variable it declares
+/// (parameters first, then each `let` in source order) with the type the
+/// checker gave it and where its name was written:
+///
+/// ```text
+/// fn add(a: i32, b: i32) -> i32
+///     a      : i32   (1:8)
+///     b      : i32   (1:16)
+///     result : i32   (2:9)
+/// fn main() -> i32
+/// ```
+///
+/// Each line is one entry of Γ, `name : type`, as it stood where the
+/// variable was declared. A variable declared inside a block is indented
+/// one step further per level of nesting, so a shadowing variable appears
+/// as a separate, more deeply indented entry. A `let mut` binding is
+/// marked `mut` at the end of its line: mutability is a property of the
+/// binding, not part of its type. A function without `-> T` is shown with
+/// the return type it really has, `-> unit`.
+pub fn print_types(typed: &TypedProgram, source: &str) -> String {
+    let mut out = String::new();
+    for function in &typed.functions {
+        out.push_str(&signature_line(function));
+        out.push('\n');
+        out.push_str(&binding_lines(function, source));
+    }
+    out
+}
+
+fn signature_line(function: &TypedFunction) -> String {
+    let params = function
+        .signature
+        .params
+        .iter()
+        .map(|(name, ty)| format!("{name}: {ty}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "fn {}({params}) -> {}",
+        function.name, function.signature.return_type
+    )
+}
+
+/// One line per binding, in aligned columns: name, type, position.
+fn binding_lines(function: &TypedFunction, source: &str) -> String {
+    let rows: Vec<(String, String, String, bool)> = function
+        .bindings
+        .iter()
+        .map(|binding| {
+            let indent = "    ".repeat(binding.depth + 1);
+            let (line, column) = diagnostics::line_and_column(source, binding.span.start);
+            (
+                format!("{indent}{}", binding.name),
+                binding.ty.to_string(),
+                format!("({line}:{column})"),
+                binding.mutable,
+            )
+        })
+        .collect();
+
+    let name_width = rows.iter().map(|row| row.0.len()).max().unwrap_or(0);
+    let type_width = rows.iter().map(|row| row.1.len()).max().unwrap_or(0);
+
+    let mut out = String::new();
+    for (name, ty, position, mutable) in rows {
+        out.push_str(&format!(
+            "{name:<name_width$} : {ty:<type_width$}   {position}"
+        ));
+        if mutable {
+            out.push_str("  mut");
+        }
+        out.push('\n');
+    }
+    out
 }
